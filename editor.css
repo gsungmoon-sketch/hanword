@@ -1,35 +1,32 @@
 /* RG DS 한워드 — 아래한글(HWP) 스타일. DSI-2(640x480) 터치. 밝은 테마 */
-@font-face { font-family:"NotoKR"; src:url("/font/NotoSansKR.ttf") format("truetype"); font-display:swap; }
-/* 오픈 한글 웹폰트(font/ 폴더, 라이선스는 licenses/ 참고). 실제 사용된 폰트만 lazy 다운로드·캐시 */
-@font-face { font-family:"Noto Sans KR"; font-weight:400; src:url("/font/NotoSansKR-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"Noto Sans KR"; font-weight:700; src:url("/font/NotoSansKR-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"Noto Serif KR"; font-weight:400; src:url("/font/NotoSerifKR-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"Noto Serif KR"; font-weight:700; src:url("/font/NotoSerifKR-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"Pretendard"; font-weight:400; src:url("/font/Pretendard-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"Pretendard"; font-weight:700; src:url("/font/Pretendard-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"NanumGothic"; font-weight:400; src:url("/font/NanumGothic-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"NanumGothic"; font-weight:700; src:url("/font/NanumGothic-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"NanumMyeongjo"; font-weight:400; src:url("/font/NanumMyeongjo-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"NanumMyeongjo"; font-weight:700; src:url("/font/NanumMyeongjo-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"D2Coding"; font-weight:400; src:url("/font/D2Coding-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"D2Coding"; font-weight:700; src:url("/font/D2Coding-700.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"NotoKR"; src:url("font/NotoSansKR.ttf") format("truetype"); font-display:swap; }
+/* 오픈 한글 웹폰트(font/ 폴더 — 파일별 라이선스·배포 범위는 licenses/README.md). 실제 사용된 폰트만 lazy 다운로드·캐시 */
+@font-face { font-family:"Noto Sans KR"; font-weight:400; src:url("font/NotoSansKR-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"Noto Sans KR"; font-weight:700; src:url("font/NotoSansKR-700.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"Noto Serif KR"; font-weight:400; src:url("font/NotoSerifKR-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"Noto Serif KR"; font-weight:700; src:url("font/NotoSerifKR-700.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"Pretendard"; font-weight:400; src:url("font/Pretendard-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"Pretendard"; font-weight:700; src:url("font/Pretendard-700.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"NanumGothic"; font-weight:400; src:url("font/NanumGothic-Regular.ttf") format("truetype"); font-display:swap; }
+@font-face { font-family:"NanumGothic"; font-weight:700; src:url("font/NanumGothic-Bold.ttf") format("truetype"); font-display:swap; }
+@font-face { font-family:"NanumMyeongjo"; font-weight:400; src:url("font/NanumMyeongjo-Regular.ttf") format("truetype"); font-display:swap; }
+@font-face { font-family:"NanumMyeongjo"; font-weight:700; src:url("font/NanumMyeongjo-Bold.ttf") format("truetype"); font-display:swap; }
+@font-face { font-family:"D2Coding"; font-weight:400; src:url("font/D2Coding-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"D2Coding"; font-weight:700; src:url("font/D2Coding-700.woff2") format("woff2"); font-display:swap; }
 /* KTUG 배포 한글 폰트(함초롬체LVT=자유배포/은바탕=GPL). 한자·옛한글은 서브셋 제외→NotoKR 폴백 */
-@font-face { font-family:"함초롬바탕"; font-weight:400; src:url("/font/Hamchorom-Batang-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"함초롬바탕"; font-weight:700; src:url("/font/Hamchorom-Batang-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"함초롬돋움"; font-weight:400; src:url("/font/Hamchorom-Dotum-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"함초롬돋움"; font-weight:700; src:url("/font/Hamchorom-Dotum-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"UnBatang"; font-weight:400; src:url("/font/UnBatang-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"UnBatang"; font-weight:700; src:url("/font/UnBatang-700.woff2") format("woff2"); font-display:swap; }
+
+
+
 /* 독점 폰트명 별칭 → 가장 가까운 오픈 폰트로 렌더(이름은 HWPX에 원본 보존, 한글에선 정품 사용) */
-@font-face { font-family:"맑은 고딕"; src:url("/font/Pretendard-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"맑은 고딕"; font-weight:700; src:url("/font/Pretendard-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"굴림"; src:url("/font/NotoSansKR-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"돋움"; src:url("/font/NotoSansKR-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"HY견고딕"; src:url("/font/NotoSansKR-700.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"바탕"; src:url("/font/NotoSerifKR-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"궁서"; src:url("/font/NotoSerifKR-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"나눔고딕"; src:url("/font/NanumGothic-400.woff2") format("woff2"); font-display:swap; }
-@font-face { font-family:"나눔명조"; src:url("/font/NanumMyeongjo-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"맑은 고딕"; src:url("font/Pretendard-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"맑은 고딕"; font-weight:700; src:url("font/Pretendard-700.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"굴림"; src:url("font/NotoSansKR-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"돋움"; src:url("font/NotoSansKR-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"HY견고딕"; src:url("font/NotoSansKR-700.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"바탕"; src:url("font/NotoSerifKR-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"궁서"; src:url("font/NotoSerifKR-400.woff2") format("woff2"); font-display:swap; }
+@font-face { font-family:"나눔고딕"; src:url("font/NanumGothic-Regular.ttf") format("truetype"); font-display:swap; }
+@font-face { font-family:"나눔명조"; src:url("font/NanumMyeongjo-Regular.ttf") format("truetype"); font-display:swap; }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html,body { margin:0; height:100%; overflow:hidden; font-family:"NotoKR","Noto Sans KR","NanumGothic",sans-serif; background:#cfd4da; font-size:13px; }
 body { display:flex; flex-direction:column; }
@@ -481,3 +478,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .mb:focus-visib
 #board-ov .bd-nick-in, #board-ov .bd-pw-in{ flex:1; min-width:120px; }
 #board-ov .bd-privlbl{ display:flex; align-items:center; gap:5px; font-size:13px; color:#4a5765; white-space:nowrap; }
 #board-ov .bd-actions{ display:flex; justify-content:flex-end; }
+/* 임베드 모드(?embed=1, wp-embed.js): 서버 파일 저장 UI(문서 이름·자동저장) 숨김 / 읽기 전용이면 서식 도구 숨김 */
+html.wp-embed #docname, html.wp-embed #autosave-lbl { display:none !important; }
+html.wp-ro #toolbar, html.wp-ro #ruler, html.wp-ro #tabletools, html.wp-ro #objtools, html.wp-ro #aligntools,
+html.wp-ro #croptools, html.wp-ro #zordertools, html.wp-ro #placetools, html.wp-ro #shapetools { display:none !important; }

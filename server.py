@@ -584,20 +584,21 @@ class H(BaseHTTPRequestHandler):
     timeout = int(os.environ.get("WP_SOCK_TIMEOUT", "60"))   # 느린/정지 클라이언트가 스레드를 무기한 점유하지 않게(slowloris 완화)
     def log_message(self, *a): pass  # 조용히
 
-    def _sec_headers(self, csp=None):
+    def _sec_headers(self, csp=None, frame_self=False):
         # 하드닝(#18): 모든 응답에 공통 보안헤더. csp 미지정이면 문서 외 응답용 기본 CSP.
+        #   frame_self = 임베드(?embed=1) 문서: 같은 출처 부모의 iframe만 허용(그 외 출처 프레이밍은 계속 차단)
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Frame-Options", "SAMEORIGIN" if frame_self else "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy", csp or CSP_DEFAULT)
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8", cors=False, csp=None):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", cors=False, csp=None, frame_self=False):
         if isinstance(body, str): body = body.encode("utf-8", "replace")   # 고립 서로게이트 → UnicodeEncodeError 크래시 방지
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self._sec_headers(csp)
+        self._sec_headers(csp, frame_self)
         if cors: self.send_header("Access-Control-Allow-Origin", "*")   # PDF(Chromium null-origin)서 폰트 cross-origin 로드 허용
         self.end_headers()
         try: self.wfile.write(body)
@@ -663,28 +664,30 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": True, "post": post}, ensure_ascii=False))
         if PUBLIC and path.startswith("/api/"):   # 공개모드: 서버측 문서목록/불러오기/디버그 GET 전면 차단
             return self._send(404, json.dumps({"ok": False, "err": "disabled in public mode"}))
-        if path == "/" or path == "/index.html":
+        if path == "/" or path == "/index.html" or path == "/embed.html":
+            entry = "embed.html" if path == "/embed.html" else "index.html"   # embed.html = 임베드 전용 입구(SEO·인라인 스크립트 없음, scripts/build_embed.py 생성)
             try:
-                with open(os.path.join(APP, "index.html"), "r", encoding="utf-8") as f: html = f.read()
+                with open(os.path.join(APP, entry), "r", encoding="utf-8") as f: html = f.read()
             except OSError:
                 return self._send(404, "not found", "text/plain")
+            embed = entry == "embed.html" or bool(re.search(r"(?:^|&)embed=1(?:&|$)", u.query))   # wp-core.js 판정과 같은 원문 규칙(%31 등 인코딩 형태 불인정)   # 임베드(같은 출처 iframe 허용)
             nonce = secrets.token_urlsafe(16)                 # CSP nonce(요청마다 새로) → 인라인 script 허용, 주입 XSS 차단
             html = html.replace("<script", '<script nonce="%s"' % nonce)   # 기존 태그(외부·인라인) 전부 nonce 부착
             _ver = _asset_ver()   # 자산 mtime 버전 → 코드 갱신 시 URL 변경으로 캐시(브라우저·CF 엣지) 무효화
-            html = re.sub(r'((?:src|href)="/(?:wp-[a-z]+\.js|editor\.css))"', r'\1?v=' + _ver + '"', html)
-            if SITE_URL:   # 정규 주소(검색엔진): WP_SITE_URL 설정 시에만 — 기존 canonical 은 교체, 없으면 추가
+            html = re.sub(r'((?:src|href)="/?(?:wp-[a-z]+\.js|editor\.css))"', r'\1?v=' + _ver + '"', html)   # 자산 경로는 상대(하위 경로 /editor/ 배포 대응)
+            if SITE_URL and entry == "index.html":   # 정규 주소(검색엔진): WP_SITE_URL 설정 시에만 — 기존 canonical 은 교체, 없으면 추가
                 _cl = '<link rel="canonical" href="%s/">' % htmlmod.escape(SITE_URL, quote=True)
                 html, _n = re.subn(r'<link rel="canonical"[^>]*>', lambda _m: _cl, html, count=1)
                 if not _n: html = html.replace("</head>", _cl + "\n</head>", 1)
-            if PUBLIC:   # 공개모드: 플래그 주입 + wp-public.js 로드(메뉴를 업로드/다운로드로 전환)
+            if PUBLIC and entry == "index.html":   # 공개모드: 플래그 주입 + wp-public.js 로드(메뉴를 업로드/다운로드로 전환)
                 inj = ('<script nonce="%s">window.WP_PUBLIC=true;</script>\n'
                        '<script nonce="%s" defer src="/wp-public.js?v=%s"></script>\n') % (nonce, nonce, _ver)
                 html = html.replace("</head>", inj + "</head>", 1) if "</head>" in html else inj + html
             csp = ("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline'; "
                    "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
                    "media-src 'self' blob: data:; "   # P10: IndexedDB Blob 재생(blob:) + 안내서 인라인 동영상(data: — 사진 img-src data:와 대칭, 인라인이라 네트워크 egress 없음). connect/fetch는 계속 차단
-                   "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'") % nonce
-            return self._send(200, html, "text/html; charset=utf-8", csp=csp)
+                   "object-src 'none'; frame-ancestors %s; base-uri 'none'; form-action 'self'") % (nonce, "'self'" if embed else "'none'")
+            return self._send(200, html, "text/html; charset=utf-8", csp=csp, frame_self=embed)
         if path == "/editor.js" or re.match(r"^/wp-[a-z]+\.js$", path):
             return self._file(os.path.join(APP, path.lstrip("/")), "application/javascript; charset=utf-8")
         if path == "/html2canvas.min.js":   # #28 래스터 캡처 벤더 라이브러리(오프라인 동봉, 지연 로드)

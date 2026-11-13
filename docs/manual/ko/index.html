@@ -3,7 +3,7 @@
 <title>한워드(hanword) 설명서</title><link rel="stylesheet" href="../manual.css"></head><body>
 <nav class="top"><div class="in"><a href="#top"><b>목차</b></a><a href="../index.html">언어 선택</a><span class="sp"></span><a href="../en/index.html">English</a></div></nav>
 <div class="wrap" id="top"><h1>한워드(hanword) 설명서</h1>
-<p>버전 0.1.1 · 한글(HWPX)·워드(DOCX)·HTML·텍스트를 열고 저장하는 웹 워드프로세서의 설치, 사용, 운영 안내입니다. 처음이라면 1→2→3→4장 순서로 읽으세요. 모든 장은 인쇄(PDF 저장)할 수 있습니다.</p>
+<p>버전 0.1.5 · 한글(HWPX)·워드(DOCX)·HTML·텍스트를 열고 저장하는 웹 워드프로세서의 설치, 사용, 운영 안내입니다. 처음이라면 1→2→3→4장 순서로 읽으세요. 모든 장은 인쇄(PDF 저장)할 수 있습니다.</p>
 <ol class="toc">
 <li><a href="#overview">소개</a></li><li><a href="#install">설치</a></li><li><a href="#firstrun">처음 실행</a></li><li><a href="#editor">편집기 사용법</a></li><li><a href="#formats">파일 형식과 한계</a></li><li><a href="#backup">문서 저장 위치와 백업</a></li><li><a href="#trouble">문제 해결</a></li><li><a href="#security">보안</a></li><li><a href="#cli">CLI 참고</a></li><li><a href="#config">설정 참고</a></li><li><a href="#licence">라이선스와 서드파티</a></li></ol>
 
@@ -30,10 +30,10 @@
 <pre><code># Linux (받은 파일과 SHA256SUMS를 같은 폴더에)
 sha256sum -c SHA256SUMS --ignore-missing
 # macOS
-shasum -a 256 hanword-0.1.1-macos-arm64.pkg
+shasum -a 256 hanword-0.1.5-macos-arm64.pkg
 # Windows (PowerShell 또는 명령 프롬프트)
-Get-FileHash .\hanword-0.1.1-windows-x64-setup.exe -Algorithm SHA256
-certutil -hashfile hanword-0.1.1-windows-x64-setup.exe SHA256</code></pre>
+Get-FileHash .\hanword-0.1.5-windows-x64-setup.exe -Algorithm SHA256
+certutil -hashfile hanword-0.1.5-windows-x64-setup.exe SHA256</code></pre>
 <p>출력된 값이 <code>SHA256SUMS</code>의 해당 줄과 같아야 합니다.</p>
 
 <h3>2.2 Windows</h3>
@@ -49,15 +49,15 @@ certutil -hashfile hanword-0.1.1-windows-x64-setup.exe SHA256</code></pre>
 <li>데이터: <code>/Library/Application Support/hanword</code> · 로그: <code>/Library/Logs/hanword</code>.</li>
 <li>삭제: <code>sudo /usr/local/hanword/uninstall.sh [--purge]</code> (<code>--purge</code>=데이터까지 삭제)</li></ol>
 <h3>2.4 Linux (systemd)</h3>
-<pre><code>tar xzf hanword-0.1.1-linux-x64.tar.gz
-cd hanword-0.1.1-linux-x64
+<pre><code>tar xzf hanword-0.1.5-linux-x64.tar.gz
+cd hanword-0.1.5-linux-x64
 sudo ./install.sh [--port N]</code></pre>
 <ul><li>설치 위치 <code>/opt/hanword</code>, 명령 <code>/usr/local/bin/hanword</code>, 데이터 <code>/var/lib/hanword</code>(사용자 <code>hanword</code>), 유닛 <code>hanword.service</code>.</li>
 <li>상태: <code>systemctl status hanword</code> · 로그: <code>journalctl -u hanword</code></li>
 <li>삭제: <code>sudo /opt/hanword/uninstall.sh [--purge]</code></li></ul>
 <h3>2.5 어느 OS에서나: .pyz 또는 소스</h3>
 <pre><code># 단일 파일(.pyz)
-python hanword-0.1.1.pyz serve
+python hanword-0.1.5.pyz serve
 
 # 소스 받아서 실행
 git clone https://github.com/gsungmoon-sketch/hanword
@@ -217,14 +217,23 @@ hanword model report.docx &gt; report.model.json
 hanword render report.model.json out.html
 cat report.docx | hanword convert - out.hwpx --from docx</code></pre>
 <h3>apply: 편집 연산</h3>
-<p>위치는 <code>[블록 번호, 글자 오프셋]</code>(0부터)입니다. 연산 목록은 순서대로 적용되며 하나라도 실패하면 전체가 실패하고(어느 연산인지 표시) 입력은 바뀌지 않습니다. 표·그림·쪽 나누기 같은 잠금 블록 안의 글은 편집할 수 없습니다.</p>
+<p>위치는 <code>[블록 번호, 글자 오프셋]</code>(0부터)입니다. 연산 목록은 순서대로 적용되며 하나라도 실패하면 전체가 실패하고(어느 연산인지 표시) 입력은 바뀌지 않습니다. 표·그림·쪽 나누기 같은 잠금 블록 안의 글은 보통 위치로는 편집할 수 없고, 표 칸 안 글은 글 연산(insert_text·delete_range·set_style·split_paragraph)에 칸 위치 <code>[표 블록, 줄, 칸, 칸 문단, 오프셋]</code>을 줍니다(줄·칸 = 격자 좌표, 병합 칸은 왼쪽 위, start·end는 같은 칸). 표 연산도 격자 좌표를 쓰며, 구조 연산은 짧은 줄 끝 빈 자리를 빈 칸으로 채운 뒤 동작하고 병합이 겹친 표는 거절합니다.</p>
 <table><tr><th>op</th><th>인자</th></tr>
 <tr><td><code>insert_text</code></td><td><code>pos</code>, <code>text</code></td></tr>
 <tr><td><code>delete_range</code></td><td><code>start</code>, <code>end</code> (start &lt; end)</td></tr>
-<tr><td><code>set_style</code></td><td><code>start</code>, <code>end</code>, <code>attrs</code> — bold/italic/underline/strike(true), color/highlight(#RRGGBB), size(1~400), font, link. 값 null 또는 false는 해제</td></tr>
+<tr><td><code>set_style</code></td><td><code>start</code>, <code>end</code>, <code>attrs</code> — bold/italic/underline/strike/sup/sub(true — sup·sub는 서로 끔), color/highlight(#RRGGBB), size(1~400), font, link. 값 null 또는 false는 해제</td></tr>
 <tr><td><code>set_block_type</code></td><td><code>index</code>, <code>type</code>(p/h1/h2/h3/li/div), 선택: <code>list</code>(bullet|number), <code>level</code>(li만), <code>align</code>, <code>indent</code></td></tr>
 <tr><td><code>split_paragraph</code></td><td><code>pos</code></td></tr><tr><td><code>merge_paragraph</code></td><td><code>index</code> (index 블록과 다음 블록 병합)</td></tr>
-<tr><td><code>insert_pgbreak</code></td><td><code>pos</code></td></tr><tr><td><code>delete_block</code></td><td><code>index</code></td></tr><tr><td><code>insert_block</code></td><td><code>index</code>, <code>block</code></td></tr></table>
+<tr><td><code>insert_pgbreak</code></td><td><code>pos</code></td></tr><tr><td><code>delete_block</code></td><td><code>index</code></td></tr><tr><td><code>insert_block</code></td><td><code>index</code>, <code>block</code></td></tr>
+<tr><td><code>insert_table</code></td><td><code>pos</code>, <code>rows</code>(1~200), <code>cols</code>(1~64) — pos에서 문단을 나눔</td></tr>
+<tr><td><code>table_insert_rows</code> / <code>table_delete_rows</code></td><td><code>index</code>, <code>at</code>, <code>n</code>(넣기 n ≤ 100) — 병합 칸 안쪽에 넣으면 rowspan 늘림, 지우면 줄임(첫 줄이 지워진 병합 칸은 글 유지), 마지막 줄 지우기는 거절(delete_block)</td></tr>
+<tr><td><code>table_insert_cols</code> / <code>table_delete_cols</code></td><td><code>index</code>, <code>at</code>, <code>n</code> — colspan 같은 규칙. 칸 너비가 있으면 새 칸 = 이웃 평균, 표 너비 유지(비례 조정)</td></tr>
+<tr><td><code>table_merge</code></td><td><code>index</code>, <code>r0</code>, <code>c0</code>, <code>r1</code>, <code>c1</code>(격자, 포함) — 직사각형만(밖으로 걸친 병합 = 거절). 글 = 빈 칸 빼고 칸 순서대로 문단 이어 붙임, 서식 = 첫 칸</td></tr>
+<tr><td><code>table_split</code></td><td><code>index</code>, <code>r</code>, <code>c</code> — 합친 칸을 1×1 칸들로(글은 첫 칸)</td></tr>
+<tr><td><code>table_cell</code></td><td><code>index</code>, <code>r</code>, <code>c</code>, 선택: <code>runs</code> | <code>paras</code>([{runs, align?}]), <code>bg</code>(#RRGGBB, "" = 지움), <code>align</code>("" = 지움)</td></tr>
+<tr><td><code>insert_image</code></td><td><code>pos</code>, <code>src</code>(data:image/png|jpeg|gif|webp|bmp;base64), 선택 <code>width</code>(1~5000) — 그림 블록(글자처럼). 지우기 = delete_block</td></tr>
+<tr><td><code>set_image</code></td><td><code>index</code>(그림 블록) 또는 <code>pos</code>(글자처럼 그림 run·그림 블록), <code>width</code>(1~5000) — 위치 값 그대로</td></tr>
+<tr><td><code>set_page</code></td><td>선택: <code>paper</code>, <code>orient</code>(portrait|landscape), <code>margins</code>("위,오른,아래,왼" mm) — "" = 지움</td></tr></table>
 <pre><code>[
   {"op":"insert_text","pos":[0,0],"text":"제목: "},
   {"op":"set_style","start":[0,0],"end":[0,3],"attrs":{"bold":true,"color":"#1f5fbf"}},
@@ -285,4 +294,4 @@ fonttools ttLib.woff2 compress 원본.ttf</code></pre>
 <li>번들 JavaScript: html2canvas, jsPDF(각 프로젝트의 라이선스는 저장소의 NOTICE 및 파일 머리말 참고).</li>
 <li>선택 구성요소는 번들되지 않으며 각자의 라이선스를 따릅니다. 특히 <b>pyhwp는 AGPL-3.0</b>이라 직접 설치하는 경우에만 사용됩니다.</li>
 <li>함초롬체(한컴), 은바탕(GPL)은 포함되지 않습니다.</li></ul>
-<footer>한워드(hanword) 0.1.1 설명서 · MIT 라이선스 · 화면 이름은 버전에 따라 조금 다를 수 있습니다.</footer></div></body></html>
+<footer>한워드(hanword) 0.1.5 설명서 · MIT 라이선스 · 화면 이름은 버전에 따라 조금 다를 수 있습니다.</footer></div></body></html>

@@ -30,7 +30,7 @@ EXE = NAME + (".exe" if os.name == "nt" else "")
 # Python modules of the flat layout (bundled explicitly: the CLI script is run via runpy, so
 # PyInstaller cannot see its imports, and some converters import lazily).
 MODULES = ["server", "hanword_core", "hanword_model", "hwpxconv", "hwpx_std", "docxconv", "docconv",
-           "hanword_version"]
+           "hanword_version", "hanword_htmlparse"]
 # Static files served by server.py / read by the converters (relative to ROOT).
 STATIC_GLOBS = ["*.html", "*.css", "*.js", "hwpx_skeleton.hwpx", "NOTICE-*.txt"]
 LICENCE_FILES = ["LICENSE", "NOTICE-hwpx_skeleton.txt"]

@@ -7,13 +7,21 @@
 #   block(글 블록) = {"type":"p|h1|h2|h3|li|div", "runs":[run...], "align"?, "list"?(li: bullet|number), "level"?(li: 0..8), "indent"?(px)}
 #       li.level = 목록 중첩 수준(없으면 0). 연속 li가 한 목록 묶음 — 수준마다 bullet/number 혼합 가능.
 #       render는 표준 중첩형 <ul><li>a<ul><li>b</li></ul></li></ul>, model은 형제형(<ul><li>a</li><ul><li>b</li></ul></ul>)도 수용.
-#   run = {"text":str, "bold"?, "italic"?, "underline"?, "strike"?, "color"?, "highlight"?(#RRGGBB), "size"?(pt), "font"?, "link"?}
+#   run = {"text":str, "bold"?, "italic"?, "underline"?, "strike"?, "sup"?, "sub"?, "color"?, "highlight"?(#RRGGBB), "size"?(pt), "font"?, "link"?}
+#       sup/sub = 위/아래 첨자(서로 배타 — 하나를 켜면 다른 하나는 꺼짐). HTML <sup>/<sub>·vertical-align:super|sub,
+#       DOCX w:vertAlign superscript|subscript, HWPX charPr hh:supscript|hh:subscript 왕복.
 #       | {"img":"data:image/..;base64,..", "width"?, "shape"?}  (글자처럼 그림 — 위치 1칸)
 #       | {"endnote":"id"}                                        (미주 표식 — 위치 1칸)
 #   block(잠금, P1) = {"type":"table",...} | {"type":"img",...} | {"type":"pgbreak"}
 #   위치 = [블록 index, 글자 offset]. offset은 글 블록의 text 길이 기준(개체 run=1칸).
-import re, json, copy, threading, html as htmlmod
+#       표 칸 위치(글 연산 insert_text·delete_range·set_style·split_paragraph) = [표 블록, 줄, 칸, 칸 문단, offset]
+#       — 줄·칸 = 격자 좌표(왼쪽 위 0,0, 병합 칸은 왼쪽 위 자리), 칸 문단 = paras 순번(runs 형식 칸은 0).
+#   표 연산(D11): insert_table·table_insert/delete_rows·table_insert/delete_cols·table_merge·table_split·table_cell
+#       — 격자 좌표 기준. 구조 연산은 짧은 줄 끝 빈 자리를 빈 칸으로 채운 직사각형 격자에서 동작(겹친 병합 = 거절).
+#   그림·용지 연산: insert_image·set_image·set_page. 그림 지우기 = delete_block.
+import re, json, copy, inspect, threading, html as htmlmod
 from html.parser import HTMLParser
+from hanword_htmlparse import EofSafeParser
 
 import hwpxconv
 from hwpxconv import _PP, _extract_fnotes, _safe_link_url, ListHTML, MAX_LIST_LEVEL, PAPERS_MM, _parse_margins
@@ -33,7 +41,14 @@ MAX_OPS = 10000
 MAX_TROWS = 5000; MAX_TCOLS = 256; MAX_TCELLS = 30000
 MAX_CPARAS = hwpxconv.MAX_CPARAS   # 셀 하나의 문단 수(파서와 공용)
 MAX_WORK = 3000000        # apply 한 번의 run 처리 총량(이차 시간 DoS 차단)
+MAX_DOC_CELLS = 100000    # 문서 전체 표 칸(칸 객체) 수 상한 — 표 하나 상한(MAX_TCELLS)×표 수로 메모리 폭증 차단(2026-11-14 감사)
+TABLE_OP_COST = 1000      # 표 연산 한 번의 기본 작업량(격자 계산·복사) — 칸 수 비용은 따로 더함
+_TABLE_OPS = {"insert_table", "table_insert_rows", "table_delete_rows", "table_insert_cols", "table_delete_cols",
+              "table_merge", "table_split", "table_cell"}
 _TL = threading.local()
+
+def _ncells(b):
+    return sum(len(r) for r in b.get("rows") or [] if isinstance(r, list)) if isinstance(b, dict) and b.get("type") == "table" else 0
 
 def _charge(n):
     w = getattr(_TL, "work", None)
@@ -44,7 +59,8 @@ def _charge(n):
 TEXT_TYPES = ("p", "h1", "h2", "h3", "li", "div")
 LOCKED_TYPES = ("table", "img", "pgbreak")
 ALIGNS = ("left", "center", "right", "justify")
-BOOL_ATTRS = ("bold", "italic", "underline", "strike")
+BOOL_ATTRS = ("bold", "italic", "underline", "strike", "sup", "sub")
+_EXCL = {"sup": "sub", "sub": "sup"}   # 위/아래 첨자 = 서로 배타
 STYLE_ATTRS = BOOL_ATTRS + ("color", "highlight", "size", "font", "link")
 BSTYLES = ("solid", "dashed", "dotted", "double", "hidden", "none")
 _HEX = re.compile(r"^#[0-9A-F]{6}$")
@@ -66,7 +82,7 @@ def _align(a):
     return {"start": "left", "end": "right"}.get(a, a) if a in ALIGNS + ("start", "end") else None
 
 # ───────────── HTML → 모델 ─────────────
-class _MetaGrab(HTMLParser):
+class _MetaGrab(EofSafeParser):
     def __init__(self):
         super().__init__(convert_charrefs=True); self.meta = None
     def handle_starttag(self, tag, attrs):
@@ -99,6 +115,7 @@ def _run_norm(r):
     o = {"text": _CTRL.sub("", _WS.sub(" ", r.get("text", "")).replace("\xa0", " "))[:MAX_TEXT]}
     for k in BOOL_ATTRS:
         if r.get(k): o[k] = True
+    if o.get("sup"): o.pop("sub", None)
     c = _hex6(r.get("color"))
     if c: o["color"] = c
     h = _hex6(r.get("highlight"))
@@ -231,6 +248,7 @@ def _int(v, lo, hi, what):
 def _check_style(attrs, partial=False):
     """서식 속성 검증. partial=True(set_style)면 None/False=제거 허용."""
     if not isinstance(attrs, dict): _fail("attrs는 객체여야 함")
+    if attrs.get("sup") is True and attrs.get("sub") is True: _fail("sup와 sub는 함께 켤 수 없음")
     for k, v in attrs.items():
         if k not in STYLE_ATTRS: _fail("알 수 없는 서식: %s" % k)
         if partial and (v is None or v is False): continue
@@ -355,9 +373,12 @@ def validate(m):
     for k, v in notes.items():
         if not isinstance(k, str) or not _ID.fullmatch(k) or not isinstance(v, str) or len(v) > 100000 or _SURR.search(v): _fail("notes 항목 오류")
         total += len(v)
+    cells = 0
     for b in m["blocks"]:
         total += _check_block(b)
         if total > MAX_TOTAL: _fail("문서가 너무 큼(%dMB 상한)" % (MAX_TOTAL >> 20))
+        cells += _ncells(b)
+        if cells > MAX_DOC_CELLS: _fail("표 칸이 너무 많음(문서 전체 %d 상한)" % MAX_DOC_CELLS)
     _TL.size = total
     return m
 
@@ -392,7 +413,7 @@ def _runs_html(runs, noteno):
         parts = []
         for j, g in grp:
             h, prev_space = _text_html(g["text"], prev_space, j == last_text)
-            for tag, k in (("s", "strike"), ("u", "underline"), ("i", "italic"), ("b", "bold")):
+            for tag, k in (("sup", "sup"), ("sub", "sub"), ("s", "strike"), ("u", "underline"), ("i", "italic"), ("b", "bold")):
                 if g.get(k): h = "<%s>%s</%s>" % (tag, h, tag)
             st = ""
             if g.get("color"): st += "color:%s;" % g["color"]
@@ -504,20 +525,12 @@ def _text_block(m, bi, what="블록"):
     if b["type"] not in TEXT_TYPES: _fail("%s %d은 잠금 블록(%s) — 글 편집 불가" % (what, bi, b["type"]))
     return b
 
-def op_insert_text(m, pos, text, attrs=None):
-    bi, off = _pos(m, pos); b = _text_block(m, bi)
-    if not isinstance(text, str) or not (1 <= len(text) <= MAX_INSERT): _fail("text는 1..%d자" % MAX_INSERT)
-    if _CTRL.search(text): _fail("text에 제어문자 금지(줄바꿈은 split_paragraph)")
-    head, tail = _split_at(b["runs"], off)
-    base = next((r for r in reversed(head) if "text" in r), None) or next((r for r in tail if "text" in r), None) or {}
-    st = _attrs(base) if base else {}
-    if attrs is not None:
-        _check_style(attrs, partial=True)
-        for k, v in attrs.items():
-            if v is None or v is False: st.pop(k, None)
-            else: st[k] = v
-    b["runs"] = normalize_runs(head + [dict(st, text=text)] + tail)
-    _grow(len(text.encode("utf-8")), b)
+def _set_attrs(st, attrs):   # 서식 적용(None/False=제거) — sup/sub는 서로 끔
+    for k, v in attrs.items():
+        if v is None or v is False: st.pop(k, None)
+        else:
+            st[k] = v
+            if k in _EXCL: st.pop(_EXCL[k], None)
 
 def _grow(nbytes, b=None):   # apply 중 누적 크기·run 수 상한(마지막 validate 전에 폭주 차단)
     _TL.size = getattr(_TL, "size", 0) + nbytes
@@ -526,7 +539,75 @@ def _grow(nbytes, b=None):   # apply 중 누적 크기·run 수 상한(마지막
 
 def _cmp(a, b): return (a[0], a[1]) < (b[0], b[1])
 
+# ── 표 칸 위치 [표 블록, 줄, 칸, 칸 문단, offset] ──
+def _is_cpos(p): return isinstance(p, (list, tuple)) and len(p) == 5
+
+def _cell_paras(c):   # 칸 → 문단 목록(paras 형식 = 그 목록 그대로, runs 형식 = 문단 1개 감싸개). 복사 없음 — apply가 깊은 사본에서 동작
+    _charge(1)
+    if c.get("paras"): return c["paras"]
+    return [{"runs": c.get("runs") or []}]
+
+def _cell_store(c, paras, touched=None):
+    """문단 목록 → 칸(1개 = runs, 2개 이상 = paras). touched = 바뀐 문단 번호(None = 전부) — 그 문단만 정규화(작업량 ∝ 바뀐 양).
+       1개로 줄면 그 문단 정렬이 칸 정렬이 됨(정렬 잃지 않음)."""
+    if len(paras) > MAX_CPARAS: _fail("칸 문단 과다(최대 %d)" % MAX_CPARAS)
+    for i in (range(len(paras)) if touched is None else touched):
+        if 0 <= i < len(paras):
+            q = paras[i]; q["runs"] = normalize_runs(q.get("runs") or []); _grow(0, q)
+            if q.get("align") and q["align"] == c.get("align"): del q["align"]
+    if len(paras) == 1:
+        q = paras[0]; c.pop("paras", None); c["runs"] = q["runs"]
+        if q.get("align"): c["align"] = q["align"]
+    else:
+        c.pop("runs", None)
+        if c.get("paras") is not paras: c["paras"] = paras
+
+def _cpos(m, p, what):
+    if not _is_cpos(p): _fail("%s는 [블록, offset] 또는 [블록, 줄, 칸, 문단, offset]" % what)
+    bi = _int(p[0], 0, len(m["blocks"]) - 1, what + " 블록")
+    return (bi, p[1], p[2]), _cell_at(m, bi, p[1], p[2], what), p[3], p[4]
+
+def _cell_ctx(m, start, end=None, swhat="pos"):
+    """칸 위치 검증 → (칸, 문단 목록, (문단, offset)[, (문단, offset)]). end가 있으면 같은 칸이어야 함."""
+    key, cell, pi, off = _cpos(m, start, swhat)
+    paras = _cell_paras(cell)
+    _int(pi, 0, len(paras) - 1, swhat + " 문단"); _int(off, 0, block_len(paras[pi]), swhat + " offset")
+    if end is None: return cell, paras, (pi, off)
+    if not _is_cpos(end): _fail("start와 end는 같은 형식(둘 다 칸 위치)이어야 함")
+    key2, _, pj, offj = _cpos(m, end, "end")
+    if key2 != key: _fail("start와 end는 같은 칸이어야 함")
+    _int(pj, 0, len(paras) - 1, "end 문단"); _int(offj, 0, block_len(paras[pj]), "end offset")
+    return cell, paras, (pi, off), (pj, offj)
+
+def _no_cpos(p, what):
+    if _is_cpos(p): _fail("표 칸 안에는 %s 넣을 수 없음" % what)
+
+def _ins(b, off, text, attrs):
+    if not isinstance(text, str) or not (1 <= len(text) <= MAX_INSERT): _fail("text는 1..%d자" % MAX_INSERT)
+    if _CTRL.search(text): _fail("text에 제어문자 금지(줄바꿈은 split_paragraph)")
+    head, tail = _split_at(b["runs"], off)
+    base = next((r for r in reversed(head) if "text" in r), None) or next((r for r in tail if "text" in r), None) or {}
+    st = _attrs(base) if base else {}
+    if attrs is not None:
+        _check_style(attrs, partial=True); _set_attrs(st, attrs)
+    b["runs"] = normalize_runs(head + [dict(st, text=text)] + tail)
+    _grow(len(text.encode("utf-8")), b)
+
+def op_insert_text(m, pos, text, attrs=None):
+    if _is_cpos(pos):
+        cell, paras, (pi, off) = _cell_ctx(m, pos)
+        _ins(paras[pi], off, text, attrs); _cell_store(cell, paras, (pi,)); return
+    bi, off = _pos(m, pos); b = _text_block(m, bi)
+    _ins(b, off, text, attrs)
+
 def op_delete_range(m, start, end):
+    if _is_cpos(start) or _is_cpos(end):
+        if not _is_cpos(start): _fail("start와 end는 같은 형식(둘 다 칸 위치)이어야 함")
+        cell, paras, s, e = _cell_ctx(m, start, end, "start")
+        if not _cmp(s, e): _fail("start < end 이어야 함")
+        head, _ = _split_at(paras[s[0]]["runs"], s[1]); _, tail = _split_at(paras[e[0]]["runs"], e[1])
+        paras[s[0]]["runs"] = head + tail; _charge(e[0] - s[0]); del paras[s[0] + 1:e[0] + 1]
+        _cell_store(cell, paras, (s[0],)); return
     s = _pos(m, start, "start"); e = _pos(m, end, "end")
     if not _cmp(s, e): _fail("start < end 이어야 함")
     sb = _text_block(m, s[0], "start"); eb = _text_block(m, e[0], "end")
@@ -534,24 +615,29 @@ def op_delete_range(m, start, end):
     sb["runs"] = normalize_runs(head + tail)
     del m["blocks"][s[0] + 1:e[0] + 1]
 
-def op_set_style(m, start, end, attrs):
-    s = _pos(m, start, "start"); e = _pos(m, end, "end")
-    if not _cmp(s, e): _fail("start < end 이어야 함")
-    _check_style(attrs, partial=True)
+def _style_range(blocks, s, e, attrs):
     for bi in range(s[0], e[0] + 1):
-        b = m["blocks"][bi]; _charge(1)
-        if b["type"] not in TEXT_TYPES: continue
+        b = blocks[bi]; _charge(1)
+        if b.get("type", "p") not in TEXT_TYPES: continue
         a = s[1] if bi == s[0] else 0; z = e[1] if bi == e[0] else block_len(b)
         head, rest = _split_at(b["runs"], a); mid, tail = _split_at(rest, z - a)
         new = []
         for r in mid:
-            if "text" in r:
-                r = dict(r)
-                for k, v in attrs.items():
-                    if v is None or v is False: r.pop(k, None)
-                    else: r[k] = v
+            if "text" in r: r = dict(r); _set_attrs(r, attrs)
             new.append(r)
         b["runs"] = normalize_runs(head + new + tail); _grow(0, b)
+
+def op_set_style(m, start, end, attrs):
+    if _is_cpos(start) or _is_cpos(end):
+        if not _is_cpos(start): _fail("start와 end는 같은 형식(둘 다 칸 위치)이어야 함")
+        cell, paras, s, e = _cell_ctx(m, start, end, "start")
+        if not _cmp(s, e): _fail("start < end 이어야 함")
+        _check_style(attrs, partial=True)
+        _style_range(paras, s, e, attrs); _cell_store(cell, paras, range(s[0], e[0] + 1)); return
+    s = _pos(m, start, "start"); e = _pos(m, end, "end")
+    if not _cmp(s, e): _fail("start < end 이어야 함")
+    _check_style(attrs, partial=True)
+    _style_range(m["blocks"], s, e, attrs)
 
 def op_set_block_type(m, index, type, list=None, **kw):
     bi = _int(index, 0, len(m["blocks"]) - 1, "index"); b = _text_block(m, bi)
@@ -575,6 +661,12 @@ def op_set_block_type(m, index, type, list=None, **kw):
     m["blocks"][bi] = nb
 
 def op_split_paragraph(m, pos):
+    if _is_cpos(pos):
+        cell, paras, (pi, off) = _cell_ctx(m, pos)
+        if len(paras) >= MAX_CPARAS: _fail("칸 문단 과다(최대 %d)" % MAX_CPARAS)
+        head, tail = _split_at(paras[pi]["runs"], off)
+        paras[pi]["runs"] = head; paras.insert(pi + 1, dict(paras[pi], runs=tail))
+        _cell_store(cell, paras, (pi, pi + 1)); return
     bi, off = _pos(m, pos); b = _text_block(m, bi)
     head, tail = _split_at(b["runs"], off)
     nb = {k: v for k, v in b.items() if k != "runs"}
@@ -589,14 +681,18 @@ def op_merge_paragraph(m, index):
     a["runs"] = normalize_runs(a["runs"] + b["runs"])
     del m["blocks"][bi + 1]
 
-def op_insert_pgbreak(m, pos):
+def _insert_obj(m, pos, blk):   # 잠금 블록을 pos에 넣음(글 블록 중간이면 문단을 나눔, 처음이면 앞, 끝이면 뒤)
     bi, off = _pos(m, pos, allow_end_block=True)
     if bi < len(m["blocks"]) and m["blocks"][bi]["type"] in TEXT_TYPES and 0 < off:
         if off < block_len(m["blocks"][bi]): op_split_paragraph(m, [bi, off])
         bi += 1
-    m["blocks"].insert(bi, {"type": "pgbreak"})
+    m["blocks"].insert(bi, blk)
 
-def op_delete_block(m, index):
+def op_insert_pgbreak(m, pos):
+    _no_cpos(pos, "쪽 나눔을")
+    _insert_obj(m, pos, {"type": "pgbreak"})
+
+def op_delete_block(m, index):   # 글·표·그림·쪽 나눔 블록 공통(그림 지우기 = 이것)
     bi = _int(index, 0, len(m["blocks"]) - 1, "index")
     del m["blocks"][bi]
 
@@ -605,26 +701,323 @@ def op_insert_block(m, index, block):
     _grow(_check_block(block))
     m["blocks"].insert(bi, copy.deepcopy(block))
 
+# ───────────── 표 연산(D11) ─────────────
+#   격자 = HTML 표 배치 규칙(칸은 위 줄 rowspan이 차지한 자리를 건너뜀, rowspan은 표 끝에서 자름).
+#   칸 목록 원소 = [줄, 칸, rowspan, colspan, cell]. 구조 연산은 짧은 줄 끝 빈 자리를 빈 칸으로 채운 뒤 동작.
+MAX_TNEW_ROWS = 200; MAX_TNEW_COLS = 64; MAX_TINS = 100
+
+def _ecell(tmpl=None):   # 빈 칸(tmpl이 있으면 테두리·정렬만 이어받음 — 글·배경·그림·너비는 아님)
+    c = {"colspan": 1, "rowspan": 1, "runs": []}
+    if tmpl:
+        if tmpl.get("align"): c["align"] = tmpl["align"]
+        if tmpl.get("borders"): c["borders"] = copy.deepcopy(tmpl["borders"])
+    return c
+
+def _table(m, index):
+    bi = _int(index, 0, len(m["blocks"]) - 1, "index")
+    b = m["blocks"][bi]
+    if b["type"] != "table": _fail("블록 %d은 표가 아님(%s)" % (bi, b["type"]))
+    return b
+
+def _tgrid(b):
+    """표 → (칸 목록, 차지한 자리 set, 줄 수, 격자 칸 수). 비용 = 칸 면적 합(validate 상한 MAX_TCELLS). 겹침 = 거절."""
+    rows = b["rows"]; nr = len(rows); occ = set(); an = []; nc = 0
+    _charge(nr)
+    for r, row in enumerate(rows):
+        c = 0
+        for cell in row:
+            while (r, c) in occ: c += 1
+            rs = min(cell.get("rowspan", 1), nr - r); cs = cell.get("colspan", 1)
+            _charge(rs * cs)
+            for i in range(r, r + rs):
+                for j in range(c, c + cs):
+                    if (i, j) in occ: _fail("표 칸이 겹침(병합 구조 오류) — 편집 불가")
+                    occ.add((i, j))
+            an.append([r, c, rs, cs, cell]); c += cs
+            if c > nc: nc = c
+    return an, occ, nr, nc
+
+def _cell_at(m, bi, r, c, what="칸"):
+    b = m["blocks"][bi]
+    if b["type"] != "table": _fail("%s: 블록 %d은 표가 아님" % (what, bi))
+    _int(r, 0, MAX_TROWS, what + " 줄"); _int(c, 0, MAX_TCOLS, what + " 칸")
+    gc = getattr(_TL, "gcache", None); rows = b["rows"]
+    ent = gc.get(id(rows)) if gc is not None else None
+    if ent is None or ent[0] is not rows:   # apply 안 캐시: 구조 연산은 rows 목록을 새로 만들어(_tbuild) 저절로 무효
+        ent = (rows, {(a[0], a[1]): a[4] for a in _tgrid(b)[0]})
+        if gc is not None: gc[id(rows)] = ent   # rows 참조를 쥐어 id 재사용 없음
+    cell = ent[1].get((r, c))
+    if cell is not None: return cell
+    _fail("%s: (%d,%d)에 칸 없음(병합 칸은 왼쪽 위 좌표)" % (what, r, c))
+
+def _tfull(b):
+    an, occ, nr, nc = _tgrid(b)
+    if nr * nc > MAX_TCELLS: _fail("표가 너무 큼")
+    _charge(nr * nc)
+    for r in range(nr):
+        for c in range(nc):
+            if (r, c) not in occ: an.append([r, c, 1, 1, _ecell()])
+    return an, nr, nc
+
+def _tbuild(b, an, nr):
+    if nr > MAX_TROWS: _fail("표 줄 과다(최대 %d)" % MAX_TROWS)
+    starts = set(a[0] for a in an)
+    cnt = [0] * (nr + 1)   # cnt[i] = i 앞의 빈 줄(시작하는 칸 없음 = 위 병합이 다 덮은 줄) 수 — 빈 줄은 빼고 rowspan 줄임(DOCX·HWPX 빈 행 방지)
+    for i in range(nr): cnt[i + 1] = cnt[i] + (i not in starts)
+    nn = nr - cnt[nr]
+    rows = [[] for _ in range(nn)]
+    for r, c, rs, cs, cell in sorted(an, key=lambda a: (a[0], a[1])):
+        cell["rowspan"] = rs - (cnt[r + rs] - cnt[r]); cell["colspan"] = cs; rows[r - cnt[r]].append(cell)
+    b["rows"] = rows
+    if "rowh" in b:
+        rh = b["rowh"][:nr]
+        b["rowh"] = [h for i, h in enumerate(rh) if i in starts]
+        if not any(b["rowh"]): del b["rowh"]
+
+def _colw(an, nc):   # 격자 칸 너비(px, 실수) — 칸 width가 하나도 없으면 None
+    if not any(a[4].get("width") for a in an): return None
+    w = [0.0] * nc
+    for r, c, rs, cs, cell in an:
+        if cs == 1 and cell.get("width") and not w[c]: w[c] = float(cell["width"])
+    for r, c, rs, cs, cell in an:
+        if cs > 1 and cell.get("width"):
+            for j in range(c, c + cs):
+                if not w[j]: w[j] = cell["width"] / cs
+    known = [x for x in w if x]
+    avg = sum(known) / len(known)
+    return [x or avg for x in w]
+
+def _setw(an, w, total):   # 표 너비(total) 유지하도록 비례 조정 → 칸 width = 걸친 격자 칸 너비 합
+    s = sum(w) or 1.0; w = [x * total / s for x in w]
+    for r, c, rs, cs, cell in an:
+        cell["width"] = max(1, min(10000, int(round(sum(w[c:c + cs])))))
+
+def _tmpl_line(an, idx, axis):   # 기준 줄(axis=0)/칸(axis=1) idx에서 각 자리를 차지한 칸
+    t = {}
+    for a in an:
+        if a[axis] <= idx < a[axis] + a[2 + axis]:
+            for j in range(a[1 - axis], a[1 - axis] + a[3 - axis]): t[j] = a[4]
+    return t
+
+def op_insert_table(m, pos, rows, cols):
+    _no_cpos(pos, "표를")
+    nr = _int(rows, 1, MAX_TNEW_ROWS, "rows"); nc = _int(cols, 1, MAX_TNEW_COLS, "cols")
+    _charge(nr * nc)
+    _insert_obj(m, pos, {"type": "table", "rows": [[_ecell() for _ in range(nc)] for _ in range(nr)]})
+
+def op_table_insert_rows(m, index, at, n=1):
+    b = _table(m, index); n = _int(n, 1, MAX_TINS, "n")
+    an, nr, nc = _tfull(b); at = _int(at, 0, nr, "at")
+    if (nr + n) * nc > MAX_TCELLS: _fail("표가 너무 큼")
+    tr = at - 1 if at > 0 else 0
+    tmpl = _tmpl_line(an, tr, 0); cov = set()
+    for a in an:
+        r, c, rs, cs, _ = a
+        if r < at < r + rs: a[2] += n; cov.update(range(c, c + cs))   # 병합 칸 안쪽에 넣음 = rowspan 늘림
+        elif r >= at: a[0] += n
+    for i in range(at, at + n):
+        for j in range(nc):
+            if j not in cov: an.append([i, j, 1, 1, _ecell(tmpl.get(j))])
+    if b.get("rowh"):
+        rh = b["rowh"] + [0] * (nr - len(b["rowh"])); b["rowh"] = rh[:at] + [rh[tr]] * n + rh[at:]
+    _tbuild(b, an, nr + n)
+
+def op_table_delete_rows(m, index, at, n=1):
+    b = _table(m, index)
+    an, nr, nc = _tfull(b); at = _int(at, 0, nr - 1, "at"); n = _int(n, 1, nr - at, "n")
+    if n >= nr: _fail("마지막 줄은 지울 수 없음(표 지우기는 delete_block)")
+    keep = []
+    for a in an:
+        r, c, rs, cs, _ = a
+        ov = max(0, min(r + rs, at + n) - max(r, at))
+        if ov == rs: continue                                      # 지운 줄 안에만 있던 칸
+        a[2] = rs - ov                                             # 지운 줄에 걸친 병합 = rowspan 줄임
+        if r >= at + n: a[0] = r - n
+        elif r >= at: a[0] = at                                    # 첫 줄이 지워진 병합 칸 = 남은 첫 줄로(글 유지)
+        keep.append(a)
+    if b.get("rowh"): b["rowh"] = b["rowh"][:at] + b["rowh"][at + n:]
+    _tbuild(b, keep, nr - n)
+
+def op_table_insert_cols(m, index, at, n=1):
+    b = _table(m, index); n = _int(n, 1, MAX_TINS, "n")
+    an, nr, nc = _tfull(b); at = _int(at, 0, nc, "at")
+    if nc + n > MAX_TCOLS: _fail("표 칸 과다(최대 %d)" % MAX_TCOLS)
+    if nr * (nc + n) > MAX_TCELLS: _fail("표가 너무 큼")
+    w = _colw(an, nc)
+    tc = at - 1 if at > 0 else 0
+    tmpl = _tmpl_line(an, tc, 1); cov = set()
+    for a in an:
+        r, c, rs, cs, _ = a
+        if c < at < c + cs: a[3] += n; cov.update(range(r, r + rs))   # 병합 칸 안쪽에 넣음 = colspan 늘림
+        elif c >= at: a[1] += n
+    for i in range(nr):
+        if i in cov: continue
+        for j in range(at, at + n): an.append([i, j, 1, 1, _ecell(tmpl.get(i))])
+    if w:   # 새 칸 너비 = 이웃 평균, 표 너비 유지
+        nb = [w[k] for k in (at - 1, at) if 0 <= k < nc]
+        _setw(an, w[:at] + [sum(nb) / len(nb)] * n + w[at:], sum(w))
+    _tbuild(b, an, nr)
+
+def op_table_delete_cols(m, index, at, n=1):
+    b = _table(m, index)
+    an, nr, nc = _tfull(b); at = _int(at, 0, nc - 1, "at"); n = _int(n, 1, nc - at, "n")
+    if n >= nc: _fail("마지막 칸은 지울 수 없음(표 지우기는 delete_block)")
+    w = _colw(an, nc); keep = []
+    for a in an:
+        r, c, rs, cs, _ = a
+        ov = max(0, min(c + cs, at + n) - max(c, at))
+        if ov == cs: continue
+        a[3] = cs - ov
+        if c >= at + n: a[1] = c - n
+        elif c >= at: a[1] = at
+        keep.append(a)
+    if w: _setw(keep, w[:at] + w[at + n:], sum(w))
+    _tbuild(b, keep, nr)
+
+def op_table_merge(m, index, r0, c0, r1, c1):
+    b = _table(m, index); an, nr, nc = _tfull(b)
+    r0 = _int(r0, 0, nr - 1, "r0"); c0 = _int(c0, 0, nc - 1, "c0")
+    r1 = _int(r1, r0, nr - 1, "r1"); c1 = _int(c1, c0, nc - 1, "c1")
+    inside = []; rest = []
+    for a in an:
+        r, c, rs, cs, _ = a
+        if r > r1 or r + rs - 1 < r0 or c > c1 or c + cs - 1 < c0: rest.append(a); continue
+        if r < r0 or r + rs - 1 > r1 or c < c0 or c + cs - 1 > c1: _fail("병합이 고른 영역 밖으로 걸침 — 직사각형으로 고르세요")
+        inside.append(a)
+    if len(inside) < 2: _fail("합칠 칸이 둘 이상이어야 함")
+    inside.sort(key=lambda a: (a[0], a[1]))
+    w = _colw(an, nc)
+    first = inside[0][4]; paras = []; imgs = []
+    for a in inside:   # 글 = 칸 순서(줄 우선)대로 문단 이어 붙임(빈 칸은 건너뜀)
+        ps = _cell_paras(a[4]); _charge(len(ps))
+        if any(p["runs"] for p in ps): paras.extend(ps)
+        imgs.extend(a[4].get("images") or [])
+        if len(paras) > MAX_CPARAS: _fail("합친 칸 문단 과다(최대 %d)" % MAX_CPARAS)
+    _cell_store(first, paras or [{"runs": []}])
+    if imgs: first["images"] = imgs
+    rest.append([r0, c0, r1 - r0 + 1, c1 - c0 + 1, first])
+    if w: _setw(rest, w, sum(w))
+    _tbuild(b, rest, nr)
+
+def op_table_split(m, index, r, c):
+    b = _table(m, index); an, nr, nc = _tfull(b)
+    r = _int(r, 0, nr - 1, "r"); c = _int(c, 0, nc - 1, "c")
+    a = next((a for a in an if a[0] == r and a[1] == c), None)
+    if a is None: _fail("(%d,%d)에 칸 없음(병합 칸은 왼쪽 위 좌표)" % (r, c))
+    if a[2] == 1 and a[3] == 1: _fail("합친 칸이 아님")
+    w = _colw(an, nc); cell = a[4]
+    for i in range(r, r + a[2]):
+        for j in range(c, c + a[3]):
+            if (i, j) == (r, c): continue
+            e = _ecell(cell)
+            if cell.get("bg"): e["bg"] = cell["bg"]
+            an.append([i, j, 1, 1, e])
+    a[2] = a[3] = 1
+    if w: _setw(an, w, sum(w))
+    _tbuild(b, an, nr)
+
+def op_table_cell(m, index, r, c, runs=None, paras=None, bg=None, align=None):
+    _table(m, index); cell = _cell_at(m, index, r, c)
+    if runs is None and paras is None and bg is None and align is None: _fail("runs·paras·bg·align 중 하나 이상 필요")
+    if runs is not None and paras is not None: _fail("runs와 paras는 함께 줄 수 없음")
+    if runs is not None:
+        _grow(_check_runs(runs, cell=True)); _charge(len(runs))
+        _cell_store(cell, [{"runs": copy.deepcopy(runs)}])
+    if paras is not None:
+        if not isinstance(paras, list) or not (1 <= len(paras) <= MAX_CPARAS): _fail("paras는 1..%d개 배열" % MAX_CPARAS)
+        for p in paras:
+            if not isinstance(p, dict) or "runs" not in p or set(p) - {"runs", "align"}: _fail("칸 문단 키 오류")
+            if "align" in p and p["align"] not in ALIGNS: _fail("칸 문단 align 값 오류")
+            _grow(_check_runs(p["runs"], cell=True)); _charge(len(p["runs"]) + 1)
+        _cell_store(cell, copy.deepcopy(paras))
+    if bg is not None:
+        if not isinstance(bg, str) or (bg and not _HEX.fullmatch(bg.upper())): _fail("bg는 #RRGGBB 또는 \"\"")
+        if bg: cell["bg"] = bg.upper()
+        else: cell.pop("bg", None)
+    if align is not None:
+        if align != "" and align not in ALIGNS: _fail("align은 %s 또는 \"\"" % "/".join(ALIGNS))
+        if align: cell["align"] = align
+        else: cell.pop("align", None)
+        for p in cell.get("paras") or []:
+            if p.get("align") == cell.get("align"): p.pop("align", None)
+
+# ───────────── 그림·용지 연산 ─────────────
+def _src_ok(src):
+    if not isinstance(src, str) or len(src) > MAX_TOTAL or not _IMG.fullmatch(src): _fail("src는 data:image/(png|jpeg|gif|webp|bmp);base64 만")
+    return src
+
+def op_insert_image(m, pos, src, width=None):
+    _no_cpos(pos, "그림을")
+    blk = {"type": "img", "src": _src_ok(src)}   # place 생략 = char(글자처럼)
+    if width is not None: blk["width"] = _int(width, 1, 5000, "width")
+    _grow(len(src))
+    _insert_obj(m, pos, blk)
+
+def op_set_image(m, width, index=None, pos=None):
+    w = _int(width, 1, 5000, "width")
+    if (index is None) == (pos is None): _fail("index 또는 pos 중 하나만")
+    if index is not None:
+        bi = _int(index, 0, len(m["blocks"]) - 1, "index"); b = m["blocks"][bi]
+        if b["type"] != "img": _fail("블록 %d은 그림이 아님(%s)" % (bi, b["type"]))
+        b["width"] = w; return
+    _no_cpos(pos, "글자처럼 그림을")
+    bi, off = _pos(m, pos); b = m["blocks"][bi]
+    if b["type"] == "img": b["width"] = w; return
+    if b["type"] not in TEXT_TYPES: _fail("블록 %d은 그림이 아님(%s)" % (bi, b["type"]))
+    head, tail = _split_at(b["runs"], off)
+    if not tail or "img" not in tail[0]: _fail("pos 자리에 그림이 없음")
+    tail[0]["width"] = w   # 개체 run은 _split_at이 복사하지 않음 = 원 run
+
+def op_set_page(m, paper=None, orient=None, margins=None):
+    if paper is None and orient is None and margins is None: _fail("paper·orient·margins 중 하나 이상 필요")
+    meta = m.setdefault("meta", {})
+    for k, v in (("paper", paper), ("orient", orient), ("margins", margins)):
+        if v is None: continue
+        if not isinstance(v, str) or len(v) > 100: _fail("%s는 문자열" % k)
+        if v == "": meta.pop(k, None); continue
+        if not _page_meta_ok(k, v): _fail("%s 값 오류(%s)" % (k, {"paper": "/".join(PAPERS_MM), "orient": "portrait|landscape",
+                                                                "margins": "\"위,오른,아래,왼\" mm 0..100"}[k]))
+        meta[k] = v
+
 OPS = {"insert_text": op_insert_text, "delete_range": op_delete_range, "set_style": op_set_style,
        "set_block_type": op_set_block_type, "split_paragraph": op_split_paragraph, "merge_paragraph": op_merge_paragraph,
-       "insert_pgbreak": op_insert_pgbreak, "delete_block": op_delete_block, "insert_block": op_insert_block}
+       "insert_pgbreak": op_insert_pgbreak, "delete_block": op_delete_block, "insert_block": op_insert_block,
+       "insert_table": op_insert_table, "table_insert_rows": op_table_insert_rows, "table_delete_rows": op_table_delete_rows,
+       "table_insert_cols": op_table_insert_cols, "table_delete_cols": op_table_delete_cols, "table_merge": op_table_merge,
+       "table_split": op_table_split, "table_cell": op_table_cell,
+       "insert_image": op_insert_image, "set_image": op_set_image, "set_page": op_set_page}
+
+_SIGS = {k: inspect.signature(f) for k, f in OPS.items()}
 
 def apply(m, ops):
     """연산 목록 적용 → 새 모델(입력은 바꾸지 않음, 순수 함수). 하나라도 실패하면 ModelError(어느 op인지 표시)."""
     validate(m)
     if not isinstance(ops, list) or len(ops) > MAX_OPS: _fail("ops는 배열(최대 %d)" % MAX_OPS)
     m = copy.deepcopy(m)
-    _TL.work = 0
+    _TL.work = 0; _TL.gcache = {}
+    cells = sum(_ncells(b) for b in m["blocks"])   # 문서 전체 칸 수(연산마다 바뀐 표만 다시 셈)
     try:
         for i, op in enumerate(ops):
             if not isinstance(op, dict) or not isinstance(op.get("op"), str) or op["op"] not in OPS: _fail("op[%d]: 알 수 없는 연산" % i)
             args = {k: v for k, v in op.items() if k != "op"}
-            try: OPS[op["op"]](m, **args)
+            try: _SIGS[op["op"]].bind(m, **args)   # 인자 묶기 오류만 사용자 오류(연산 안 TypeError = 내부 버그 그대로)
             except TypeError as e: _fail("op[%d] %s: 인자 오류(%s)" % (i, op["op"], str(e)[:120]))
-            except ModelError as e: _fail("op[%d] %s: %s" % (i, op["op"], e))
+            name = op["op"]; idx = args.get("index"); before = None
+            if name in _TABLE_OPS: _charge(TABLE_OP_COST)
+            if (name in _TABLE_OPS or name == "delete_block") and name not in ("insert_table", "table_cell") \
+                    and isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(m["blocks"]):   # 칸 수가 바뀌는 연산만 다시 셈
+                before = _ncells(m["blocks"][idx]); _charge(len(m["blocks"][idx].get("rows") or []))
+            try: OPS[name](m, **args)
+            except ModelError as e: _fail("op[%d] %s: %s" % (i, name, e))
+            if name == "insert_table": cells += int(args["rows"]) * int(args["cols"])
+            elif name == "insert_block": cells += _ncells(args.get("block"))
+            elif before is not None:
+                after = 0 if name == "delete_block" else _ncells(m["blocks"][idx])
+                cells += after - before
+            if cells > MAX_DOC_CELLS: _fail("op[%d] %s: 표 칸이 너무 많음(문서 전체 %d 상한)" % (i, name, MAX_DOC_CELLS))
             if len(m["blocks"]) > MAX_BLOCKS: _fail("블록 과다")
     finally:
-        _TL.work = None
+        _TL.work = None; _TL.gcache = None
     used = {r["endnote"] for b in m["blocks"] for r in b.get("runs") or [] if "endnote" in r}
     m["notes"] = {k: v for k, v in (m.get("notes") or {}).items() if k in used}   # 표식이 지워진 미주 정리
     validate(m)

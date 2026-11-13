@@ -124,6 +124,8 @@ def _rpr(r, hsize=None, rstyle=None):
     if r.get("underline"): o.append('<w:u w:val="single"/>')
     h = _hex(r.get("highlight"))
     if h: o.append('<w:shd w:val="clear" w:color="auto" w:fill="%s"/>' % h)
+    if r.get("sup"): o.append('<w:vertAlign w:val="superscript"/>')   # 스키마 순서: shd 뒤
+    elif r.get("sub"): o.append('<w:vertAlign w:val="subscript"/>')
     return ("<w:rPr>%s</w:rPr>" % "".join(o)) if o else ""
 
 def _textrun(text, rpr):

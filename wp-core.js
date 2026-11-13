@@ -7,6 +7,10 @@
   var menubar = $("menubar"), dropdown = $("dropdown"), toast = $("toast");
   // Enter가 <div> 대신 <p>를 만들게(WebKit 기본=div → 제목/목록/문단 블록작업이 엉뚱한 블록에 적용되는 버그 방지)
   try { document.execCommand("defaultParagraphSeparator", false, "p"); } catch (e) {}
+  // 임베드 모드(?embed=1, 2026-11-13): 결재 등 같은 출처 부모 페이지가 iframe으로 띄우는 단일 문서 편집기.
+  //   파일 목록·저장·삭제·이름변경 등 서버 저장 UI 전부 숨김, /api 호출 금지 — 문서 입출력은 wp-embed.js postMessage.
+  var EMBED = window.WP_IFRAME = /^\?(?:.*&)?embed=1(?:&|$)/.test(location.search) || document.documentElement.hasAttribute("data-wp-embed");   // embed.html 입구 = 표식 속성
+  if (EMBED) document.documentElement.classList.add("wp-embed");
   var dirty = false, saveTimer = null, savedRange = null, saving = false, pendingSave = false;
   // 선택영역 저장/복원(대화상자가 포커스 가져가도 유지) — 여러 모듈 공유
   function saveRange() { var s = window.getSelection(); if (s.rangeCount && page.contains(s.anchorNode)) savedRange = s.getRangeAt(0).cloneRange(); }
@@ -213,7 +217,8 @@
 
   // ── HWP 메뉴 구성 ──
   var MENUS = [
-    { name:"파일", items: window.WP_PUBLIC ? [
+    { name:"파일", items: EMBED ? [
+      ["바로 인쇄(브라우저)","","browserPrint"] ] : window.WP_PUBLIC ? [
       ["새 문서","Alt+N","new"], ["내 PC에서 열기 (업로드)","Alt+O","open"], "-",
       ["HTML로 내려받기","Alt+S","dlHtml"],
       ["한글 문서로 내려받기 (HWPX)","","dlHwpx"],
@@ -248,8 +253,13 @@
       ["미주 삽입","","fnInsert"], ["미주 번호 갱신","","fnRenum"] ]},   // 목차 생성=1회 스냅샷(편집가능 텍스트, 2026-07-20). 옛 자동갱신 목차는 폐지
     { name:"도구", items:[ ["맞춤법 검사","F8","spell"], ["글자 수","","wordcount"], "-", ["편집 역사 암호 설정/변경","","histpw"], "-", ["버그 신고 / 게시판","","board"] ]},
   ];
-  if (window.WP_PUBLIC) {   // 공개 웹: 미디어 삽입(영상·소리)=P10 웹 미디어(IndexedDB) 지원으로 노출(histpw도 P13로 노출). 꼬리 구분선만 정리(2026-07-20)
+  if (EMBED) {   // 임베드: 서버 저장소·외부 게시판·역사 암호(서버 .hist)·미디어(IDB/서버 폴더) 메뉴 제거
+    var EMBED_DROP = { media:1, histpw:1, board:1, objToBg:1, header:1, pagenum:1 };   // 머리말/꼬리말·쪽번호 = 호스트(결재 서버)가 직접 인쇄
+    MENUS.forEach(function (m) { if (m.items) m.items = m.items.filter(function (it) { return it === "-" || !EMBED_DROP[it[2]]; }); });
+  }
+  if (window.WP_PUBLIC || EMBED) {   // 공개 웹: 미디어 삽입(영상·소리)=P10 웹 미디어(IndexedDB) 지원으로 노출(histpw도 P13로 노출). 꼬리 구분선만 정리(2026-07-20)
     MENUS.forEach(function (m) { if (m.items) {
+      m.items = m.items.filter(function (it, k, a) { return it !== "-" || (k > 0 && a[k - 1] !== "-"); });   // 연속 구분선 정리
       while (m.items.length && m.items[m.items.length - 1] === "-") m.items.pop(); } });   // 필터로 남은 꼬리 구분선 제거
   }
   // ── 단축키: 전부 아래한글(HWP) 표준에 맞춤(비표준 우리 키 폐기) ──
@@ -279,7 +289,9 @@
     // 이동·선택
     "alt+Home":"paraHome","alt+End":"paraEnd","f3":"blockCycle",
   };
-  if (window.WP_PUBLIC) {   // 공개모드: 저장/인쇄 핫키를 다운로드로 전환(wp-public.js가 dl* 등록)
+  if (EMBED) {   // 임베드: 파일 단축키(새 문서·열기·저장·PDF·끝) 비활성 — 문서 입출력은 부모 페이지 몫
+    ["alt+n","alt+o","alt+s","ctrl+s","alt+v","alt+p","ctrl+p","alt+x"].forEach(function (k) { delete HOT[k]; });
+  } else if (window.WP_PUBLIC) {   // 공개모드: 저장/인쇄 핫키를 다운로드로 전환(wp-public.js가 dl* 등록)
     HOT["alt+s"] = "dlHtml"; HOT["ctrl+s"] = "dlHtml"; HOT["alt+p"] = "dlPdf"; HOT["ctrl+p"] = "dlPdf";
   }
 
@@ -358,6 +370,8 @@
   // ── dispatch / 코어 동작 ──
   function exec(cmd, val) { document.execCommand(cmd, false, val || null); page.focus(); markDirty(); }
   function dispatch(act) {
+    var blk = window.WP.actBlocked && window.WP.actBlocked(act);   // 임베드: 금지 동작(사유 문자열) / 읽기 전용
+    if (blk) { toastMsg(typeof blk === "string" ? blk : "읽기 전용 문서"); return; }   // 임베드 읽기 전용
     var f = ACT[act]; if (!f) { toastMsg("준비중: " + act); return; }
     f();
     if (WP.syncToolbar) requestAnimationFrame(WP.syncToolbar);   // 정렬·목록 등 selectionchange 없는 액션도 .on 즉시 반영(P1-5)
@@ -368,8 +382,9 @@
   var CLIP_KEEP = { style:1, href:1, src:1, alt:1, title:1, colspan:1, rowspan:1, "data-place":1, align:1, valign:1, width:1, height:1,
                     "data-obj":1, "data-shape":1, "data-x1":1, "data-y1":1, "data-x2":1, "data-y2":1 };   // 도형(.wp-obj) 개체성 보존(data-oid는 중복방지 위해 제외=select시 재할당)
   function sanitizeHTML(html) {   // 외부 HTML 붙임 정제: 위험 요소·속성 제거, 서식/표 구조만 유지
-    var tmp = document.createElement("div"); tmp.innerHTML = html || "";
-    Array.prototype.forEach.call(tmp.querySelectorAll("script,style,link,meta,title,noscript,iframe,object,embed,form,input,button"), function (el) { if (el.parentNode) el.parentNode.removeChild(el); });
+    // 비활성 문서에서 파싱(2026-11-13): 라이브 document의 div.innerHTML은 <img onerror>를 정제 전에 실행 → 클립보드 HTML XSS
+    var tmp = document.implementation.createHTMLDocument("").createElement("div"); tmp.innerHTML = html || "";
+    Array.prototype.forEach.call(tmp.querySelectorAll("script,style,link,meta,title,noscript,iframe,object,embed,form,input,button,foreignObject,animate,set,animateTransform,animateMotion,use,template"), function (el) { if (el.parentNode) el.parentNode.removeChild(el); });
     Array.prototype.forEach.call(tmp.querySelectorAll("*"), function (el) {
       var inSvg = el.namespaceURI === "http://www.w3.org/2000/svg";   // SVG 도형은 표현속성(fill/stroke/d/viewBox…) 필수 → 이벤트핸들러만 제거(벗기면 검정 도형)
       Array.prototype.slice.call(el.attributes).forEach(function (at) {
@@ -425,7 +440,7 @@
   function insertText(text) { document.execCommand("insertText", false, text); markDirty(); }
   function pasteExternal(html, text) {   // 시스템 클립보드 → 표 포함이면 형제 삽입, 아니면 캐럿 삽입
     if (html) {
-      var frag = sanitizeHTML(html);
+      var frag = (EMBED && window.WP.sanitizeEmbedFrag) ? window.WP.sanitizeEmbedFrag(html) : sanitizeHTML(html);   // 임베드=load와 같은 허용목록
       if (frag.querySelector("table")) { insertBlocksAsSiblings(Array.prototype.slice.call(frag.childNodes)); return true; }
       var s = window.getSelection();
       if (s.rangeCount) {
@@ -576,6 +591,7 @@
 
   // ── 저장/불러오기 ──
   function api(path, body) {
+    if (EMBED) return Promise.reject(new Error("임베드 모드: 서버 API 사용 안 함"));   // 파일 목록/삭제/저장 등 엔드포인트 호출 원천 차단
     var o = { method: body ? "POST" : "GET" };
     if (body) { o.headers = { "Content-Type": "application/json" }; o.body = JSON.stringify(body); }
     return fetch(path, o).then(function (r) {
@@ -599,7 +615,7 @@
   }
   function status(t) { statusEl.textContent = t || ""; }
   function toastMsg(t) { toast.textContent = t; toast.classList.remove("hidden"); clearTimeout(toast._t); toast._t = setTimeout(function () { toast.classList.add("hidden"); }, 1800); }
-  function markDirty() { dirty = true; status("편집 중 · 저장 안 됨"); updatePh(); scheduleRecord(); }   // 자동저장 제거(2026-07-16): 저장=Ctrl+S 명시. updatePh: 프로그램적 편집(표 삭제 등)도 플레이스홀더 동기
+  function markDirty() { if (window.WP && window.WP.onDirty) window.WP.onDirty(); dirty = true; status("편집 중 · 저장 안 됨"); updatePh(); scheduleRecord(); }   // 자동저장 제거(2026-07-16): 저장=Ctrl+S 명시. updatePh: 프로그램적 편집(표 삭제 등)도 플레이스홀더 동기
   // 마크업 정규화(#9, HEAD fd4b780 적응 복원): 무속성 span 언랩 + 인접 동일서식 순수 span 병합 + 텍스트 노드 합치기
   //   → 글자별 span 없이 run(연속 동일서식) 모델을 정규형으로 유지. 저장/출력/undo 경계서 1회.
   //   적응: class 등 속성 가진 span(미주 .fn-no 등 클로버 후 신작)은 언랩·병합 대상에서 제외(원본은 style 유무만 봤음)
@@ -696,7 +712,7 @@
     var tw = document.createTreeWalker(c, NodeFilter.SHOW_TEXT), tn, zap = [];
     while ((tn = tw.nextNode())) if (tn.nodeValue.indexOf("\uFEFF") >= 0) zap.push(tn);
     zap.forEach(function (t) { t.nodeValue = t.nodeValue.replace(/\uFEFF/g, ""); });
-    c.querySelectorAll("span").forEach(function (sp) { if (!sp.textContent && !sp.querySelector("img,br,svg") && !sp.classList.contains("wp-obj")) sp.parentNode.removeChild(sp); });   // ⚠️wp-obj(인라인 도형=텍스트 없는 span) 예외 — 종전엔 저장/export에서 도형이 통째 유실(2026-07-18)
+    c.querySelectorAll("span").forEach(function (sp) { if (!sp.textContent && !sp.querySelector("img,br,svg") && !sp.classList.contains("wp-obj") && !sp.hasAttribute("data-field")) sp.parentNode.removeChild(sp); });   // data-field=결재 양식 빈 칸(임베드) 보존   // ⚠️wp-obj(인라인 도형=텍스트 없는 span) 예외 — 종전엔 저장/export에서 도형이 통째 유실(2026-07-18)
     c.querySelectorAll("video,audio").forEach(function (m) {   // 저장=파일명 단독(html과 동일 경로 모델, 2026-07-19 P10) — blob:(IDB 재생)·상대 media/·서버 /media/ 전부 파일명으로 정규화(이식성)
       var s = m.getAttribute("src") || "", nm = null, mk;
       if (s.slice(0, 5) === "blob:") nm = _mediaNames[s] || null;
@@ -721,6 +737,7 @@
     return out;
   }
   function save(announce) {
+    if (EMBED) return Promise.resolve();   // 임베드: 저장=부모가 {type:'get'}으로 가져감(서버 저장 없음)
     if (window.WP_PUBLIC) {   // 공개모드: 서버 저장 대신 브라우저 초안(IndexedDB) 보관. dirty는 다운로드 전까지 유지(미저장 경고용)
       if (window.WP && window.WP.draftPut) window.WP.draftPut();
       return Promise.resolve();
@@ -743,8 +760,8 @@
     try { localStorage.setItem("wp-autosave", on ? "1" : "0"); } catch (e) {}
   }
   (function initAutosave() {
-    var cb = $("autosave"); if (!cb) return;
-    var on = false; try { on = localStorage.getItem("wp-autosave") === "1"; } catch (e) {}
+    var cb = $("autosave"); if (!cb || EMBED) return;   // 임베드: 자동저장 없음(선호값도 건드리지 않음)
+    var on = false; try { on = !EMBED && localStorage.getItem("wp-autosave") === "1"; } catch (e) {}
     cb.checked = on; autosaveApply(on);
     cb.addEventListener("change", function () { autosaveApply(cb.checked); if (cb.checked && dirty) save(true); page.focus(); });
   })();
@@ -794,7 +811,7 @@
   // #31 파일 자동열기: /?open=<문서명|documents 상대경로> — 기기 연결프로그램 라우터(fm-open) 연동.
   //   전 모듈 등록 후(load) 불러오기와 동일 경로로 오픈. 미존재=토스트+빈 문서(보수). 공개판=쿼리 무시(로컬 전용).
   window.addEventListener("load", function () {
-    if (window.WP_PUBLIC) return;
+    if (window.WP_PUBLIC || EMBED) return;
     var q = new URLSearchParams(location.search).get("open"); if (!q) return;
     var name = q.split("/").pop();   // documents/ 접두 등 경로는 파일명만(서버 safe_name이 어차피 "/" 제거)
     if (/\.(hwpx|hwp)$/i.test(name)) {
@@ -888,7 +905,7 @@
     if (chord) {
       e.preventDefault(); clearTimeout(chordTimer); var pre = chord; chord = null;
       var k = e.key.toLowerCase();
-      if (pre === "n") { if (k === "t") dispatch("table"); else if (k === "i") dispatch("image"); else if (k === "h") dispatch("header"); else if (k === "p") dispatch("pagenum"); }
+      if (pre === "n") { if (k === "t") dispatch("table"); else if (k === "i") dispatch("image"); else if (!EMBED && k === "h") dispatch("header"); else if (!EMBED && k === "p") dispatch("pagenum"); }
       else if (pre === "m") { if (k === "k") dispatch("colorBlack"); else if (k === "r") dispatch("colorRed"); else if (k === "b") dispatch("colorBlue"); }
       return;
     }
@@ -901,7 +918,7 @@
       markDirty(); return;
     }
     var combo = comboStr(e);
-    if (combo === "ctrl+n") { e.preventDefault(); chord = "n"; toastMsg("표 T · 그림 I · 머리말 H · 쪽번호 P"); chordTimer = setTimeout(function () { chord = null; }, 2000); return; }
+    if (combo === "ctrl+n") { e.preventDefault(); chord = "n"; toastMsg(EMBED ? "표 T · 그림 I" : "표 T · 그림 I · 머리말 H · 쪽번호 P"); chordTimer = setTimeout(function () { chord = null; }, 2000); return; }
     if (combo === "ctrl+m") { e.preventDefault(); chord = "m"; toastMsg("글자색 — 검정 K · 빨강 R · 파랑 B"); chordTimer = setTimeout(function () { chord = null; }, 2000); return; }
     if (combo === "f5" || combo === "f7" || combo === "f8") {   // 표 안: 표 모듈이 F5(셀블록)·F7(칸)·F8(줄) 처리 → 편집용지(F7)/맞춤법(F8) 양보
       var an = window.getSelection().anchorNode, en = an && an.nodeType === 3 ? an.parentNode : an;
@@ -912,7 +929,7 @@
 
   // ── 공유 네임스페이스(모듈·디버그 브리지) ──
   window.WP = {
-    page: page, docname: docname,
+    page: page, docname: docname, embed: EMBED,
     $: $, exec: exec, dispatch: dispatch, ACT: ACT,
     register: function (o) { for (var k in o) ACT[k] = o[k]; },
     HOT: HOT,   // 단축키 테이블(디버그/전수 점검용)

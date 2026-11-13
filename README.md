@@ -41,6 +41,7 @@ python3 hanword check 문서.hwpx                   # 파싱+검증, 결함 있�
 python3 hanword roundtrip 문서.docx --via hwpx    # 왕복 손실 검사
 python3 hanword --json model 문서.hwpx > m.json   # 문서모델(JSON)
 python3 hanword apply m.json ops.json -o new.json # 편집 연산 적용 → render 로 다시 문서로
+python3 hanword render new.json 새.hwpx --keep 문서.hwpx  # 같은 형식 저장: 안 바뀐 문단·표 = 원본 XML 그대로(도형·수식·필드째)
 ```
 설치판에서는 `hanword serve`, `hanword convert …` 처럼 씁니다.
 

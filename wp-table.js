@@ -352,6 +352,7 @@
   var cbAnchor = null, cbFocus = null;               // F5 블록 확장 앵커/포커스 셀 위치(2026-07-06)
   function cbList() { return Array.prototype.slice.call(page.querySelectorAll("td.cb-sel,th.cb-sel")); }
   function cbClear() { cb = false; cbAnchor = cbFocus = null; page.querySelectorAll(".cb-sel").forEach(function (x) { x.classList.remove("cb-sel"); }); }
+  WP.cbClear = cbClear;   // 임베드 load 가 이전 문서 셀 블록 해제
   function cbMark(cells) {
     page.querySelectorAll(".cb-sel").forEach(function (x) { x.classList.remove("cb-sel"); });
     cells.forEach(function (td) { td.classList.add("cb-sel"); });
@@ -630,7 +631,8 @@
     var html = "<table" + (st0 ? ' style="' + st0.replace(/"/g, "&quot;") + '"' : "") + ">";
     var cg = t.querySelector("colgroup"); if (cg) html += cg.outerHTML;
     for (var r = r0; r <= r1; r++) {
-      html += "<tr>";
+      var trr = t.rows[r], drow = trr && trr.getAttribute("data-row");   // 임베드 양식 속성(data-row/field/sum) 보존
+      html += "<tr" + (drow ? ' data-row="' + WP.esc(drow) + '"' : "") + ">";
       for (var c = 0; c < cols; c++) {
         if (covered[r + "," + c]) continue;
         var cell = grid[r] && grid[r][c];
@@ -643,6 +645,7 @@
         if (cs > 1) at += ' colspan="' + cs + '"';
         if (rs > 1) at += ' rowspan="' + rs + '"';
         var stc = cell.td.getAttribute("style"); if (stc) at += ' style="' + stc.replace(/"/g, "&quot;") + '"';
+        ["data-field", "data-sum"].forEach(function (k) { var v = cell.td.getAttribute(k); if (v !== null) at += " " + k + '="' + WP.esc(v) + '"'; });
         html += "<" + tag + at + ">" + cell.td.innerHTML + "</" + tag + ">";
       }
       html += "</tr>";

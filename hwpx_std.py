@@ -124,26 +124,28 @@ class _Writer:
     def charpr(self, r, hsize=None):
         bold = bool(r.get("bold")) or bool(hsize); italic = bool(r.get("italic"))
         und = bool(r.get("underline")); strike = bool(r.get("strike"))
+        sup = bool(r.get("sup")); sub = bool(r.get("sub")) and not sup
         size = hsize or r.get("size") or 10
         try: height = max(100, min(40000, int(round(float(size) * 100))))
         except (TypeError, ValueError): height = 1000
         color = _hex6(r.get("color")) or "#000000"; shade = _hex6(r.get("highlight")) or "none"
         fname = _font1(r.get("font")); fid = self.font(fname) if fname else None
-        key = (bold, italic, und, strike, height, color, shade, fid)
-        if key == (False, False, False, False, 1000, "#000000", "none", None): return 0
+        key = (bold, italic, und, strike, height, color, shade, fid, sup, sub)
+        if key == (False, False, False, False, 1000, "#000000", "none", None, False, False): return 0
         if key in self.cps: return self.cps[key]
         if len(self.cps) >= MAX_CHARPR: return 0                 # 상한 초과=기본 글자모양
         cid = self.next_cp; self.next_cp += 1; self.cps[key] = cid
-        s = re.sub(r'<hh:charPr id="0"', '<hh:charPr id="%d"' % cid, self.cp0, 1)
-        s = re.sub(r'height="\d+"', 'height="%d"' % height, s, 1)
-        s = re.sub(r'textColor="[^"]*"', 'textColor="%s"' % color, s, 1)
-        s = re.sub(r'shadeColor="[^"]*"', 'shadeColor="%s"' % shade, s, 1)
+        s = re.sub(r'<hh:charPr id="0"', '<hh:charPr id="%d"' % cid, self.cp0, count=1)
+        s = re.sub(r'height="\d+"', 'height="%d"' % height, s, count=1)
+        s = re.sub(r'textColor="[^"]*"', 'textColor="%s"' % color, s, count=1)
+        s = re.sub(r'shadeColor="[^"]*"', 'shadeColor="%s"' % shade, s, count=1)
         if fid is not None:
-            s = re.sub(r'<hh:fontRef [^>]*/>', '<hh:fontRef hangul="%d" latin="%d" hanja="%d" japanese="%d" other="%d" symbol="%d" user="%d"/>' % ((fid,) * 7), s, 1)
+            s = re.sub(r'<hh:fontRef [^>]*/>', '<hh:fontRef hangul="%d" latin="%d" hanja="%d" japanese="%d" other="%d" symbol="%d" user="%d"/>' % ((fid,) * 7), s, count=1)
         ins = ("<hh:italic/>" if italic else "") + ("<hh:bold/>" if bold else "")
         if ins: s = s.replace("<hh:underline", ins + "<hh:underline", 1)
-        if und: s = re.sub(r'<hh:underline type="NONE"', '<hh:underline type="BOTTOM"', s, 1)
-        if strike: s = re.sub(r'<hh:strikeout shape="NONE"', '<hh:strikeout shape="SOLID"', s, 1)
+        if und: s = re.sub(r'<hh:underline type="NONE"', '<hh:underline type="BOTTOM"', s, count=1)
+        if strike: s = re.sub(r'<hh:strikeout shape="NONE"', '<hh:strikeout shape="SOLID"', s, count=1)
+        if sup or sub: s = s.replace("</hh:charPr>", "<hh:supscript/></hh:charPr>" if sup else "<hh:subscript/></hh:charPr>", 1)   # OWPML 순서: shadow 뒤
         self.new_cp.append(s)
         return cid
 
@@ -155,11 +157,11 @@ class _Writer:
         if key in self.pps: return self.pps[key]
         if len(self.pps) >= MAX_CHARPR: return 0
         pid = self.next_pp; self.next_pp += 1; self.pps[key] = pid
-        s = re.sub(r'<hh:paraPr id="0"', '<hh:paraPr id="%d"' % pid, self.pp0, 1)
-        s = re.sub(r'<hh:align horizontal="\w+"', '<hh:align horizontal="%s"' % al, s, 1)
+        s = re.sub(r'<hh:paraPr id="0"', '<hh:paraPr id="%d"' % pid, self.pp0, count=1)
+        s = re.sub(r'<hh:align horizontal="\w+"', '<hh:align horizontal="%s"' % al, s, count=1)
         if heading:
             t, ref, lv = heading
-            s = re.sub(r'<hh:heading [^>]*/>', '<hh:heading type="%s" idRef="%d" level="%d"/>' % (t, ref, lv), s, 1)
+            s = re.sub(r'<hh:heading [^>]*/>', '<hh:heading type="%s" idRef="%d" level="%d"/>' % (t, ref, lv), s, count=1)
         if ind: s = s.replace('<hc:left value="0" unit="HWPUNIT"/>', '<hc:left value="%d" unit="HWPUNIT"/>' % ind)
         self.new_pp.append(s)
         return pid
@@ -385,7 +387,7 @@ class _Writer:
         if ctrls: secrun = secrun[:-len("</hp:run>")] + ctrls + "</hp:run>"
         if page: secrun = self._page(secrun, page)
         fi, fp = first_inner if first_inner else ('<hp:run charPrIDRef="0"><hp:t/></hp:run>', 0)
-        secrun = re.sub(r'paraPrIDRef="\d+"', 'paraPrIDRef="%d"' % fp, secrun, 1)
+        secrun = re.sub(r'paraPrIDRef="\d+"', 'paraPrIDRef="%d"' % fp, secrun, count=1)
         first = secrun + fi + "</hp:p>"
         self.files["Contents/section0.xml"] = (sec[:i0] + first + "".join(body) + sec[i1:]).encode("utf-8")
         self._finish_header(meta)
@@ -404,9 +406,9 @@ class _Writer:
             mg = {k: max(0.0, min(100.0, v)) for k, v in mg.items()}
         except (TypeError, ValueError): return secrun
         mm = lambda v: int(round(v * 7200 / 25.4))
-        secrun = re.sub(r'<hp:pagePr [^>]*>', '<hp:pagePr landscape="%s" width="%d" height="%d" gutterType="LEFT_ONLY">' % ("NARROWLY" if w > h else "WIDELY", mm(w), mm(h)), secrun, 1)
+        secrun = re.sub(r'<hp:pagePr [^>]*>', '<hp:pagePr landscape="%s" width="%d" height="%d" gutterType="LEFT_ONLY">' % ("NARROWLY" if w > h else "WIDELY", mm(w), mm(h)), secrun, count=1)
         secrun = re.sub(r'<hp:margin [^>]*/>', '<hp:margin header="4252" footer="4252" gutter="0" left="%d" right="%d" top="%d" bottom="%d"/>'
-                        % (mm(mg["ml"]), mm(mg["mr"]), mm(mg["mt"]), mm(mg["mb"])), secrun, 1)
+                        % (mm(mg["ml"]), mm(mg["mr"]), mm(mg["mt"]), mm(mg["mb"])), secrun, count=1)
         self.textw = max(2000, mm(w) - mm(mg["ml"]) - mm(mg["mr"]))
         return secrun
 
@@ -416,7 +418,7 @@ class _Writer:
             nonlocal h
             if not items: return
             h = h.replace("</hh:%s>" % tag, "".join(items) + "</hh:%s>" % tag, 1)
-            h = re.sub(r'<hh:%s itemCnt="(\d+)"' % tag, lambda m: '<hh:%s itemCnt="%d"' % (tag, int(m.group(1)) + len(items)), h, 1)
+            h = re.sub(r'<hh:%s itemCnt="(\d+)"' % tag, lambda m: '<hh:%s itemCnt="%d"' % (tag, int(m.group(1)) + len(items)), h, count=1)
         add("charProperties", self.new_cp); add("paraProperties", self.new_pp); add("borderFills", self.new_bf)
         if self.new_font:
             for lang in ("HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"):
@@ -433,7 +435,7 @@ class _Writer:
                 '<hh:binItem id="%d" Type="Embedding" BinData="%s" Format="%s"/>' % (i, p.split("/", 1)[1], p.rsplit(".", 1)[1]) for i, (_, p, _, _) in enumerate(self.bins))), 1)
         st = meta.get("pagenum_start") or ""
         if re.fullmatch(r"\d{1,5}", st) and int(st) >= 2:
-            h = re.sub(r'(<hh:beginNum page=")\d+"', r'\g<1>%d"' % int(st), h, 1)
+            h = re.sub(r'(<hh:beginNum page=")\d+"', r'\g<1>%d"' % int(st), h, count=1)
         self.files["Contents/header.xml"] = h.encode("utf-8")
 
     def _zip(self):
@@ -490,6 +492,8 @@ class _Reader:
                 elif n == "italic": d["italic"] = True
                 elif n == "underline": d["underline"] = (ch.get("type") or "NONE") != "NONE"
                 elif n == "strikeout": d["strike"] = (ch.get("shape") or "NONE") not in ("NONE", "3D")
+                elif n == "supscript": d["sup"] = True
+                elif n == "subscript": d["sub"] = True
                 elif n == "fontRef": d["font"] = self.fonts.get(ch.get("hangul"))
             self.cp[c.get("id")] = d
         for p in self.hdr.iter(HH + "paraPr"):
@@ -609,6 +613,8 @@ class _Reader:
         fname = cp.get("font")
         if fname and fname not in _DEFAULT_FACES and re.fullmatch(r"[\w\s가-힣.\-]{1,40}", fname):
             style += "font-family:'%s','NotoKR',sans-serif;" % fname
+        if cp.get("sup"): t = "<sup>%s</sup>" % t
+        elif cp.get("sub"): t = "<sub>%s</sub>" % t
         if cp.get("strike"): t = "<s>%s</s>" % t
         if cp.get("bold") and not heading: t = "<b>%s</b>" % t
         if cp.get("italic"): t = "<i>%s</i>" % t

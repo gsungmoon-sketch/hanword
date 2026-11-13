@@ -266,6 +266,8 @@
   function openPage() {
     document.querySelectorAll("#pg-orient button").forEach(function (x) { x.classList.toggle("on", x.dataset.or === PAGECFG.orient); });
     $("pg-paper").value = PAGECFG.paper;
+    $("pg-mt").value = num20(PAGECFG.mt); $("pg-mb").value = num20(PAGECFG.mb); $("pg-ml").value = num20(PAGECFG.ml); $("pg-mr").value = num20(PAGECFG.mr);
+    syncPresetSel();
     var m = WP.readMeta ? WP.readMeta() : {};   // #26 쪽 테두리(wpmeta 저장 — 문서와 함께 왕복)
     $("pg-border").value = m.pageBorder || ""; $("pg-border-w").value = String(m.pageBorderW || 1);
     if (m.pageBgColor) { $("pg-bg").dataset.none = ""; if (WP.syncPalette) WP.syncPalette("pg-bg", m.pageBgColor); }   // 쪽 배경색(샘플)
@@ -279,6 +281,26 @@
   });
   $("pg-bg-clear").addEventListener("pointerup", function () { this.dataset.on = "1"; $("pg-bg-img-st").textContent = "없음(적용 시)"; });
   $("pg-bg-none").addEventListener("pointerup", function () { $("pg-bg").value = ""; $("pg-bg").dataset.none = "1"; $("pg-bg-cur").style.background = ""; var pp = document.querySelector('.cpalette[data-for="pg-bg"]'); if (pp) pp.querySelectorAll(".sw.sel").forEach(function (s) { s.classList.remove("sel"); }); });
+  // ── 여백 미리 설정(2026-11-13): 공문서(기안문) A4 = 위30·왼20·오15·아래15mm. 대화상자 선택 + 임베드 load 옵션(WP.setPaper) ──
+  var MARGIN_PRESETS = { "default": { mt: 20, mr: 20, mb: 20, ml: 20 }, gov: { mt: 30, ml: 20, mr: 15, mb: 15 } };
+  function syncPresetSel() {   // 여백 칸 값이 미리 설정과 같으면 그 이름 표시, 아니면 "직접 입력"
+    var sel = $("pg-preset"); if (!sel) return;
+    var v = { mt: +$("pg-mt").value, mr: +$("pg-mr").value, mb: +$("pg-mb").value, ml: +$("pg-ml").value }, hit = "";
+    Object.keys(MARGIN_PRESETS).forEach(function (k) { var p = MARGIN_PRESETS[k]; if (p.mt === v.mt && p.mr === v.mr && p.mb === v.mb && p.ml === v.ml) hit = k; });
+    sel.value = hit;
+  }
+  if ($("pg-preset")) {
+    $("pg-preset").addEventListener("change", function () {
+      var p = MARGIN_PRESETS[this.value]; if (!p) return;
+      $("pg-mt").value = p.mt; $("pg-mb").value = p.mb; $("pg-ml").value = p.ml; $("pg-mr").value = p.mr;
+      if (this.value === "gov") {   // 공문서 = A4 세로
+        $("pg-paper").value = "A4";
+        document.querySelectorAll("#pg-orient button").forEach(function (x) { x.classList.toggle("on", x.dataset.or === "portrait"); });
+      }
+    });
+    ["pg-mt", "pg-mb", "pg-ml", "pg-mr"].forEach(function (id) { $(id).addEventListener("input", syncPresetSel); });
+  }
+  WP.MARGIN_PRESETS = MARGIN_PRESETS;
   // ── 용지 치수(HEAD fd4b780 복원 2026-07-06): 종이를 바꾸면 페이지 폭/높이·쪽 경계도 바뀜 ──
   var PAPERS = { A3: [297, 420], A4: [210, 297], A5: [148, 210], A6: [105, 148], B4: [257, 364], B5: [182, 257], B6: [128, 182], Letter: [215.9, 279.4], Legal: [215.9, 355.6], Tabloid: [279.4, 431.8] };
   function paperWH() {
@@ -327,6 +349,26 @@
       page.style.padding = c.mt + "mm " + c.mr + "mm " + c.mb + "mm " + c.ml + "mm"; applyPaper();
     }
     return true;
+  };
+  WP.setPaper = function (cfg) {   // 프로그램 용지 설정(임베드 load 옵션). cfg = "gov" | {preset, paper, orient, mt, mr, mb, ml}. 허용 밖 값=무시(기본 유지)
+    if (typeof cfg === "string") cfg = { preset: cfg };
+    if (!cfg || typeof cfg !== "object") return false;
+    var c = { paper: "A4", orient: "portrait", mt: 20, mr: 20, mb: 20, ml: 20 }, p = MARGIN_PRESETS[cfg.preset];
+    if (p && Object.prototype.hasOwnProperty.call(MARGIN_PRESETS, cfg.preset)) { c.mt = p.mt; c.mr = p.mr; c.mb = p.mb; c.ml = p.ml; }
+    if (typeof cfg.paper === "string" && Object.prototype.hasOwnProperty.call(PAPERS, cfg.paper)) c.paper = cfg.paper;
+    if (cfg.orient === "landscape" || cfg.orient === "portrait") c.orient = cfg.orient;
+    ["mt", "mr", "mb", "ml"].forEach(function (k) { var v = cfg[k]; if (typeof v === "number" && isFinite(v) && v >= 0 && v <= 100) c[k] = Math.round(v * 10) / 10; });
+    var mEl = WP.wpmetaEl ? WP.wpmetaEl() : null; if (!mEl) return false;
+    if (c.paper !== "A4") mEl.setAttribute("data-paper", c.paper); else mEl.removeAttribute("data-paper");
+    if (c.orient === "landscape") mEl.setAttribute("data-orient", "landscape"); else mEl.removeAttribute("data-orient");
+    var mg = [c.mt, c.mr, c.mb, c.ml].map(mmStr).join(",");
+    if (mg !== "20,20,20,20") mEl.setAttribute("data-margins", mg); else mEl.removeAttribute("data-margins");
+    WP.syncPaperMeta();
+    if (WP.pageGuides) WP.pageGuides();
+    return true;
+  };
+  WP.pageCfg = function () {   // 현재 용지 설정(이름·방향·여백 mm) — 임베드 {type:'html'} 응답에 동봉
+    return { paper: PAGECFG.paper, orient: PAGECFG.orient, mt: num20(PAGECFG.mt), mr: num20(PAGECFG.mr), mb: num20(PAGECFG.mb), ml: num20(PAGECFG.ml) };
   };
   WP.paperInfo = function () {    // 용지 실치수·여백(mm) — 래스터 인쇄(wp-print)가 실제 용지비 캔버스 구성에 사용(#28)
     var wh = paperWH();

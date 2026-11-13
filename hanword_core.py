@@ -317,3 +317,22 @@ def info(data, fmt=None, name=""):
     first = next((_runs_text(b["runs"]) for b in m["blocks"] if _runs_text(b.get("runs")).strip()), "")
     r["title_guess"] = (heads[0] if heads else first)[:80]
     return r
+
+# ───────────── 원본 되씀(같은 형식 저장 — hanword_keep) ─────────────
+import hanword_keep
+
+def export_keep(orig_bytes, html_or_model, fmt, orig_sha256=None, page=None, keep=True):
+    """원본 꾸러미를 바탕으로 저장 → (bytes, report). 바뀌지 않은 덩이 = 원본 XML 조각 그대로(K2, level "blocks"),
+       불가하면 전체 다시 만들기 + 허용 목록 파트 복사(level "parts"), 그것도 안 되면 다시 만들기(level "none").
+       html_or_model = 에디터 HTML 문자열 또는 문서모델 dict. keep=False(--no-keep) = 늘 다시 만들기. 기존 export_html은 그대로."""
+    return hanword_keep.export_keep(orig_bytes, html_or_model, fmt, orig_sha256=orig_sha256, page=page, keep=keep,
+                                    export=lambda h, f, p: export_html(h, f, page=p))
+
+def keep_index(orig_bytes, fmt=None, name=""):
+    """열 때 곁 기록용 덩이 색인 {sha256, size, format, blocks, groups[{part,start,end,blocks}]} — 조각 내용 없음."""
+    fmt = fmt or detect(orig_bytes, name)
+    if fmt not in ("hwpx", "docx"): raise InputError("덩이 색인은 hwpx/docx만")
+    try: return hanword_keep.keep_index(orig_bytes, fmt)
+    except InputError: raise
+    except hanword_keep.KeepFail as e: raise InputError("덩이 색인 불가: %s" % e)
+    except Exception as e: raise InputError("덩이 색인 불가(%s)" % type(e).__name__)   # MemoryError 등도 입력 오류로

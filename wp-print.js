@@ -21,7 +21,7 @@
     if (libLoading) return libLoading;
     libLoading = new Promise(function (res, rej) {
       var s = document.createElement("script");
-      s.src = "/html2canvas.min.js";
+      s.src = "html2canvas.min.js";   // 상대경로(하위 경로 배포 /editor/ 대응)
       s.onload = function () { res(); };
       s.onerror = function () { libLoading = null; rej(new Error("html2canvas 로드 실패")); };
       document.head.appendChild(s);

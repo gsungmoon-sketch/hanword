@@ -2,7 +2,7 @@
 //   window.WP_PUBLIC=true 일 때만 동작(서버가 공개모드에서 주입). 파일 메뉴 동작을 교체.
 (function () {
   "use strict";
-  if (!window.WP_PUBLIC) return;
+  if (!window.WP_PUBLIC || window.WP_IFRAME) return;   // 임베드(?embed=1)는 공개모드 파일 UI·안내문·이탈경고 없음(wp-embed.js)
   var WP = window.WP, page = WP.page, docname = WP.docname,
       status = WP.status, toast = WP.toast, clean = WP.clean;
 
@@ -30,10 +30,11 @@
     try {
       for (var i = 0; i < document.styleSheets.length; i++) {
         var rules; try { rules = document.styleSheets[i].cssRules; } catch (e) { continue; }   // 교차출처 시트는 건너뜀
+        var fontBase = origin + "/"; try { fontBase = new URL(".", document.styleSheets[i].href || location.href).href; } catch (e) {}   // 하위 경로(/editor/) 배포 대응
         if (!rules) continue;
         for (var j = 0; j < rules.length; j++) {
           var r = rules[j];
-          if (r.type === 5) out.push(r.cssText.replace(/url\(\s*(['"]?)\/font\//g, "url($1" + origin + "/font/"));   // 5 = CSSFontFaceRule
+          if (r.type === 5) out.push(r.cssText.replace(/url\(\s*(['"]?)\/?font\//g, "url($1" + fontBase + "font/"));   // 5 = CSSFontFaceRule (상대 font/ = 시트 기준)
         }
       }
     } catch (e) {}
@@ -325,7 +326,7 @@
     if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
     if (_jspdfLoading) return _jspdfLoading;
     _jspdfLoading = new Promise(function (res, rej) {
-      var sc = document.createElement("script"); sc.src = "/jspdf.min.js";
+      var sc = document.createElement("script"); sc.src = "jspdf.min.js";
       sc.onload = function () { res(); };
       sc.onerror = function () { _jspdfLoading = null; rej(new Error("jsPDF 로드 실패")); };
       document.head.appendChild(sc);
@@ -558,7 +559,7 @@
   //    이 파일 자체가 공개모드 전용 로드라 로컬 dev(window.WP_PUBLIC 미설정)엔 원천 무영향.
   try {
     if (true) {   // 주인 지시 07-17: 매 방문 표시(첫방문 한정 해제, 아래 page 내용가드는 유지)
-      fetch("/guide.html").then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
+      fetch("guide.html").then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
         if (!html) return;   // 로드 실패=플래그 안 세움(다음 방문 재시도)
         if (WP.page.textContent.replace(/\s/g, "")) return;   // 이미 내용 있음(초안 복구 등) → 덮지 않음
         WP.page.innerHTML = html;

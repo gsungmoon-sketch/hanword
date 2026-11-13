@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """문서모델·렌더·편집연산 단위시험(stdlib unittest). 실행: python3 -m unittest tests/test_model.py
    python-hwpx/lxml 없는 환경(-s -I, Maru Alpine)에서도 전부 통과해야 함(.hwp만 pyhwp 필요 시 생략)."""
-import os, sys, json, glob, unittest, copy
+import os, sys, re, time, json, glob, unittest, copy
 HERE = os.path.dirname(os.path.abspath(__file__)); APP = os.path.dirname(HERE)
 sys.path.insert(0, APP)
 import hanword_core as core
@@ -168,6 +168,15 @@ class Linear(unittest.TestCase):   # 2026-11-13 마루 감사: 비신뢰 HTML �
     def test_check_lt(self): self._t(core.check_html, '<' * self.N)
     def test_check_img(self): self._t(core.check_html, '<img ' * self.N)
     def test_check_table(self): self._t(core.check_html, '<table' * self.N)
+    def test_eof_tail_old_parser(self):   # Windows CI(3.10.11·3.11.9 = CVE-2025-6069 이전 html.parser): close() 때 닫히지 않은 구성마다 끝까지 재탐색
+        from hanword_htmlparse import eof_safe
+        for s in ('<img ' * self.N, '<table' * self.N, '<p>a</p>' + '<!-- >' * self.N, '<![CDATA[ ]>' * self.N, '<p>x</p><img src="a"'):
+            t0 = time.time(); r = eof_safe(s); self.assertLess(time.time() - t0, 1.0)
+            self.assertNotIn("<", r[r.rfind(">") + 1:])                    # 마지막 '>' 뒤 여는 구성 없음
+            last = max((m.start() for m in re.finditer(r"--\s*>", r)), default=-1)
+            self.assertTrue(all(m.start() + 4 <= last for m in re.finditer("<!--", r)))   # 모든 <!-- 는 뒤에 닫는 짝
+        for s in ('<p>a<!--c--></p>', '<![if !supportLists]><p>a</p><![endif]>', '<p title="a<b">x</p>'):
+            self.assertEqual(eof_safe(s), s)                                # 닫힌 문서는 바이트 그대로
     def test_semantics(self):
         n, h = hwpxconv._extract_fnotes('<p>a</p><div class="fnotes"><p class="fn-e" data-fn="1"><span class="fn-no">1)</span> 주석</p></div>')
         self.assertEqual(n, {"1": "주석"}); self.assertEqual(h, "<p>a</p>")
@@ -598,6 +607,294 @@ class ZipDeterminism(unittest.TestCase):   # 2026-11-13 Windows CI: create_syste
         import docxconv
         h = "<p>a</p>"
         self.assertEqual(docxconv.html_to_docx(h), docxconv.html_to_docx(h)); self.assertEqual(hwpxconv.html_to_hwpx(h), hwpxconv.html_to_hwpx(h))
+
+# ───────────── D11 표·그림·용지 연산 / D12 위·아래 첨자 (2026-11-13) ─────────────
+PNG = "data:image/png;base64,iVBORw0KGgo="
+def _doc(*blocks): return {"version": 1, "meta": {}, "notes": {}, "blocks": list(blocks)}
+def _p(t): return {"type": "p", "runs": [{"text": t}] if t else []}
+def _grid(rows, cols, fill=True):
+    return {"type": "table", "rows": [[{"colspan": 1, "rowspan": 1, "runs": [{"text": "%d%d" % (r, c)}] if fill else []}
+                                       for c in range(cols)] for r in range(rows)]}
+def _shape(t):   # [(rowspan, colspan, 글)] 줄별
+    return [[(c["rowspan"], c["colspan"], " | ".join(hm.block_text(p) for p in hm._cell_paras(c))) for c in row] for row in t["rows"]]
+def _tops(m, *ops): return hm.apply(m, [dict(o) for o in ops])
+
+class TableOps(unittest.TestCase):
+    def test_insert_table(self):
+        m = _tops(_doc(_p("가나다")), {"op": "insert_table", "pos": [0, 1], "rows": 2, "cols": 3})
+        self.assertEqual([b["type"] for b in m["blocks"]], ["p", "table", "p"])
+        self.assertEqual(hm.block_text(m["blocks"][0]), "가"); self.assertEqual(hm.block_text(m["blocks"][2]), "나다")
+        self.assertEqual(_shape(m["blocks"][1]), [[(1, 1, "")] * 3] * 2)
+        m = _tops(_doc(_p("가")), {"op": "insert_table", "pos": [0, 0], "rows": 1, "cols": 1})   # 문단 앞
+        self.assertEqual([b["type"] for b in m["blocks"]], ["table", "p"])
+        m = _tops(_doc(_p("가")), {"op": "insert_table", "pos": [1, 0], "rows": 1, "cols": 1})   # 문서 끝
+        self.assertEqual([b["type"] for b in m["blocks"]], ["p", "table"])
+        self.assertEqual(hm.model(hm.render(m)), m)
+        for bad in ({"rows": 0, "cols": 1}, {"rows": 201, "cols": 1}, {"rows": 1, "cols": 65}, {"rows": "2", "cols": 2}, {"rows": True, "cols": 2}):
+            with self.assertRaises(ModelError): _tops(_doc(_p("가")), dict({"op": "insert_table", "pos": [0, 0]}, **bad))
+        with self.assertRaises(ModelError): _tops(_doc(_p("가")), {"op": "insert_table", "pos": [0, 5], "rows": 1, "cols": 1})
+        t = _doc(_grid(1, 1))
+        with self.assertRaises(ModelError): _tops(t, {"op": "insert_table", "pos": [0, 0, 0, 0, 0], "rows": 1, "cols": 1})   # 중첩 표 없음
+
+    def test_rows(self):
+        m = _tops(_doc(_grid(3, 2)), {"op": "table_insert_rows", "index": 0, "at": 1, "n": 2})
+        self.assertEqual(_shape(m["blocks"][0]), [[(1, 1, "00"), (1, 1, "01")], [(1, 1, "")] * 2, [(1, 1, "")] * 2,
+                                                 [(1, 1, "10"), (1, 1, "11")], [(1, 1, "20"), (1, 1, "21")]])
+        m = _tops(_doc(_grid(2, 2)), {"op": "table_insert_rows", "index": 0, "at": 2})   # 끝에 1줄(n 기본 1)
+        self.assertEqual(len(m["blocks"][0]["rows"]), 3)
+        # 병합 걸친 줄: 안쪽에 넣으면 rowspan 늘림, 경계에 넣으면 그대로
+        sp = _tops(_doc(_grid(3, 2)), {"op": "table_merge", "index": 0, "r0": 0, "c0": 0, "r1": 1, "c1": 0})
+        m = _tops(sp, {"op": "table_insert_rows", "index": 0, "at": 1, "n": 1})
+        self.assertEqual(_shape(m["blocks"][0]), [[(3, 1, "00 | 10"), (1, 1, "01")], [(1, 1, "")], [(1, 1, "11")], [(1, 1, "20"), (1, 1, "21")]])
+        m = _tops(sp, {"op": "table_insert_rows", "index": 0, "at": 2, "n": 1})
+        self.assertEqual(_shape(m["blocks"][0])[0][0], (2, 1, "00 | 10")); self.assertEqual(len(m["blocks"][0]["rows"]), 4)
+        # 지우기: 병합 첫 줄을 지우면 글은 남은 첫 줄로, rowspan 줄임
+        m = _tops(sp, {"op": "table_delete_rows", "index": 0, "at": 0, "n": 1})
+        self.assertEqual(_shape(m["blocks"][0]), [[(1, 1, "00 | 10"), (1, 1, "11")], [(1, 1, "20"), (1, 1, "21")]])
+        m = _tops(sp, {"op": "table_delete_rows", "index": 0, "at": 0, "n": 2})   # 병합 전체가 지워짐
+        self.assertEqual(_shape(m["blocks"][0]), [[(1, 1, "20"), (1, 1, "21")]])
+        m = _tops(sp, {"op": "table_delete_rows", "index": 0, "at": 1, "n": 2})
+        self.assertEqual(_shape(m["blocks"][0]), [[(1, 1, "00 | 10"), (1, 1, "01")]])
+        rh = _doc(dict(_grid(2, 1), rowh=[30, 40]))
+        self.assertEqual(_tops(rh, {"op": "table_insert_rows", "index": 0, "at": 1})["blocks"][0]["rowh"], [30, 30, 40])
+        self.assertEqual(_tops(rh, {"op": "table_delete_rows", "index": 0, "at": 0})["blocks"][0]["rowh"], [40])
+        for op in ({"op": "table_insert_rows", "index": 0, "at": 0, "n": 101}, {"op": "table_insert_rows", "index": 0, "at": 0, "n": 0},
+                   {"op": "table_insert_rows", "index": 0, "at": 4}, {"op": "table_delete_rows", "index": 0, "at": 0, "n": 3},
+                   {"op": "table_delete_rows", "index": 0, "at": 3}, {"op": "table_delete_rows", "index": 0, "at": 2, "n": 2},
+                   {"op": "table_insert_rows", "index": 1, "at": 0}):
+            with self.assertRaises(ModelError, msg=op): _tops(_doc(_grid(3, 2), _p("x")), op)
+        with self.assertRaisesRegex(ModelError, "마지막 줄"): _tops(_doc(_grid(1, 2)), {"op": "table_delete_rows", "index": 0, "at": 0})
+
+    def test_cols_and_widths(self):
+        t = _grid(2, 3)
+        for row in t["rows"]:
+            for c, w in zip(row, (100, 200, 300)): c["width"] = w
+        m = _tops(_doc(t), {"op": "table_insert_cols", "index": 0, "at": 1, "n": 1})
+        self.assertEqual(_shape(m["blocks"][0])[0], [(1, 1, "00"), (1, 1, ""), (1, 1, "01"), (1, 1, "02")])
+        ws = [c["width"] for c in m["blocks"][0]["rows"][0]]
+        self.assertEqual(sum(ws), 600); self.assertEqual(ws[1], ws[2] * 150 // 200)   # 이웃 평균 150, 표 너비 유지(비례)
+        m = _tops(_doc(t), {"op": "table_delete_cols", "index": 0, "at": 0})
+        self.assertEqual(sum(c["width"] for c in m["blocks"][0]["rows"][0]), 600)
+        self.assertNotIn("width", _tops(_doc(_grid(1, 2)), {"op": "table_insert_cols", "index": 0, "at": 2})["blocks"][0]["rows"][0][0])
+        sp = _tops(_doc(_grid(2, 3)), {"op": "table_merge", "index": 0, "r0": 0, "c0": 0, "r1": 0, "c1": 1})
+        m = _tops(sp, {"op": "table_insert_cols", "index": 0, "at": 1, "n": 2})   # 병합 안쪽 = colspan 늘림
+        self.assertEqual(_shape(m["blocks"][0]), [[(1, 4, "00 | 01"), (1, 1, "02")], [(1, 1, "10"), (1, 1, ""), (1, 1, ""), (1, 1, "11"), (1, 1, "12")]])
+        m = _tops(sp, {"op": "table_delete_cols", "index": 0, "at": 0})
+        self.assertEqual(_shape(m["blocks"][0]), [[(1, 1, "00 | 01"), (1, 1, "02")], [(1, 1, "11"), (1, 1, "12")]])
+        for op in ({"op": "table_insert_cols", "index": 0, "at": 0, "n": 101}, {"op": "table_insert_cols", "index": 0, "at": 4},
+                   {"op": "table_delete_cols", "index": 0, "at": 0, "n": 3}, {"op": "table_delete_cols", "index": 0, "at": 1, "n": 3}):
+            with self.assertRaises(ModelError, msg=op): _tops(_doc(_grid(1, 3)), op)
+        with self.assertRaisesRegex(ModelError, "칸 과다"): _tops(_doc(_grid(1, 200)), {"op": "table_insert_cols", "index": 0, "at": 0, "n": 57})
+
+    def test_merge_split(self):
+        base = _doc(_grid(3, 3))
+        m = _tops(base, {"op": "table_merge", "index": 0, "r0": 0, "c0": 0, "r1": 1, "c1": 1})
+        self.assertEqual(_shape(m["blocks"][0]), [[(2, 2, "00 | 01 | 10 | 11"), (1, 1, "02")], [(1, 1, "12")], [(1, 1, "20"), (1, 1, "21"), (1, 1, "22")]])
+        self.assertEqual(hm.model(hm.render(m)), m)
+        s = _tops(m, {"op": "table_split", "index": 0, "r": 0, "c": 0})   # 왕복: 구조 복원, 글은 첫 칸
+        self.assertEqual([[(a, b) for a, b, _ in row] for row in _shape(s["blocks"][0])], [[(1, 1)] * 3] * 3)
+        self.assertEqual(_shape(s["blocks"][0])[0][0][2], "00 | 01 | 10 | 11"); self.assertEqual(_shape(s["blocks"][0])[1][0][2], "")
+        e = copy.deepcopy(base); e["blocks"][0]["rows"][0][0]["runs"] = []; e["blocks"][0]["rows"][0][1]["bg"] = "#FF0000"
+        em = _tops(e, {"op": "table_merge", "index": 0, "r0": 0, "c0": 0, "r1": 0, "c1": 1})   # 빈 칸은 건너뜀, 서식 = 첫 칸
+        self.assertEqual(em["blocks"][0]["rows"][0][0]["runs"], [{"text": "01"}]); self.assertNotIn("bg", em["blocks"][0]["rows"][0][0])
+        for op in ({"r0": 0, "c0": 0, "r1": 0, "c1": 0}, {"r0": 1, "c0": 0, "r1": 0, "c1": 0}, {"r0": 0, "c0": 0, "r1": 3, "c1": 0},
+                   {"r0": 1, "c0": 1, "r1": 2, "c1": 2}):   # 마지막 = 걸친 병합(0,0~1,1)이 밖으로 나감
+            with self.assertRaises(ModelError, msg=op): _tops(m if op["r0"] == 1 and op["c0"] == 1 else base, dict({"op": "table_merge", "index": 0}, **op))
+        with self.assertRaisesRegex(ModelError, "걸침"): _tops(m, {"op": "table_merge", "index": 0, "r0": 0, "c0": 1, "r1": 0, "c1": 2})
+        with self.assertRaisesRegex(ModelError, "합친 칸이 아님"): _tops(base, {"op": "table_split", "index": 0, "r": 0, "c": 0})
+        with self.assertRaisesRegex(ModelError, "칸 없음"): _tops(m, {"op": "table_split", "index": 0, "r": 1, "c": 1})
+
+    def test_ragged_and_overlap(self):
+        rg = _doc({"type": "table", "rows": [[{"colspan": 1, "rowspan": 1, "runs": [{"text": "a"}]}, {"colspan": 1, "rowspan": 1, "runs": []}],
+                                             [{"colspan": 1, "rowspan": 1, "runs": [{"text": "b"}]}]]})
+        m = _tops(rg, {"op": "table_insert_cols", "index": 0, "at": 2})   # 짧은 줄 끝 빈 자리 = 빈 칸으로 채움
+        self.assertEqual([len(r) for r in m["blocks"][0]["rows"]], [3, 3])
+        ov = _doc({"type": "table", "rows": [[{"colspan": 1, "rowspan": 1, "runs": []}, {"colspan": 1, "rowspan": 2, "runs": []}],
+                                             [{"colspan": 2, "rowspan": 1, "runs": []}]]})   # (1,0) colspan 2 가 (1,1) rowspan과 겹침
+        with self.assertRaisesRegex(ModelError, "겹침"): _tops(ov, {"op": "table_insert_rows", "index": 0, "at": 0})
+
+    def test_table_cell(self):
+        m = _tops(_doc(_grid(2, 2)), {"op": "table_cell", "index": 0, "r": 1, "c": 1, "runs": [{"text": "굵게", "bold": True}], "bg": "#00ff00", "align": "center"})
+        c = m["blocks"][0]["rows"][1][1]
+        self.assertEqual(c, {"colspan": 1, "rowspan": 1, "runs": [{"text": "굵게", "bold": True}], "bg": "#00FF00", "align": "center"})
+        m = _tops(m, {"op": "table_cell", "index": 0, "r": 1, "c": 1, "paras": [{"runs": [{"text": "a"}]}, {"runs": [], "align": "right"}], "bg": "", "align": ""})
+        self.assertEqual(m["blocks"][0]["rows"][1][1], {"colspan": 1, "rowspan": 1, "paras": [{"runs": [{"text": "a"}]}, {"runs": [], "align": "right"}]})
+        self.assertEqual(hm.model(hm.render(m)), m)
+        for bad in ({}, {"runs": [], "paras": [{"runs": []}]}, {"bg": "red"}, {"bg": "#12345"}, {"align": "middle"},
+                    {"runs": [{"img": PNG}]}, {"runs": [{"text": ""}]}, {"paras": []}, {"paras": [{"runs": [], "x": 1}]},
+                    {"paras": [{"runs": []}] * (hm.MAX_CPARAS + 1)}, {"r": 0, "c": 5, "bg": "#FFFFFF"}, {"index": 1, "bg": "#FFFFFF"}):
+            op = dict({"op": "table_cell", "index": 0, "r": 0, "c": 0}, **bad)
+            with self.assertRaises(ModelError, msg=bad): _tops(_doc(_grid(2, 2), _p("x")), op)
+
+    def test_cell_text_ops(self):
+        d = _doc(_p("앞"), _grid(2, 2))
+        m = _tops(d, {"op": "insert_text", "pos": [1, 1, 0, 0, 2], "text": "가"},
+                  {"op": "split_paragraph", "pos": [1, 1, 0, 0, 1]},
+                  {"op": "set_style", "start": [1, 1, 0, 0, 0], "end": [1, 1, 0, 1, 1], "attrs": {"bold": True}},
+                  {"op": "insert_text", "pos": [0, 1], "text": "!"})
+        c = m["blocks"][1]["rows"][1][0]
+        self.assertEqual(c["paras"], [{"runs": [{"text": "1", "bold": True}]}, {"runs": [{"text": "0", "bold": True}, {"text": "가"}]}])
+        self.assertEqual(hm.block_text(m["blocks"][0]), "앞!")
+        m = _tops(m, {"op": "delete_range", "start": [1, 1, 0, 0, 1], "end": [1, 1, 0, 1, 1]})   # 문단 경계 지우기 → 1문단 = runs
+        self.assertEqual(m["blocks"][1]["rows"][1][0]["runs"], [{"text": "1", "bold": True}, {"text": "가"}])
+        sp = _tops(d, {"op": "table_merge", "index": 1, "r0": 0, "c0": 0, "r1": 1, "c1": 0})
+        self.assertEqual(hm.block_text(_tops(sp, {"op": "insert_text", "pos": [1, 0, 0, 1, 0], "text": "Z"})["blocks"][1]["rows"][0][0]["paras"][1]), "Z10")
+        for op in ({"op": "insert_text", "pos": [1, 1, 0, 0, 3], "text": "x"}, {"op": "insert_text", "pos": [1, 1, 0, 1, 0], "text": "x"},
+                   {"op": "insert_text", "pos": [1, 2, 0, 0, 0], "text": "x"}, {"op": "insert_text", "pos": [0, 0, 0, 0, 0], "text": "x"},
+                   {"op": "insert_text", "pos": [1, 0, 0, 0], "text": "x"}, {"op": "insert_text", "pos": [1, 0, 0, 0, 0], "text": "a\nb"},
+                   {"op": "delete_range", "start": [1, 0, 0, 0, 0], "end": [1, 0, 1, 0, 1]},
+                   {"op": "delete_range", "start": [1, 0, 0, 0, 1], "end": [1, 0, 0, 0, 0]},
+                   {"op": "set_style", "start": [0, 0], "end": [1, 0, 0, 0, 1], "attrs": {"bold": True}},
+                   {"op": "set_style", "start": [1, 0, 0, 0, 0], "end": [1, 0, 0, 0, 1], "attrs": {"zz": True}},
+                   {"op": "insert_pgbreak", "pos": [1, 0, 0, 0, 0]}, {"op": "insert_image", "pos": [1, 0, 0, 0, 0], "src": PNG}):
+            with self.assertRaises(ModelError, msg=op): _tops(d, op)
+        with self.assertRaisesRegex(ModelError, "칸 없음"): _tops(sp, {"op": "insert_text", "pos": [1, 1, 0, 0, 0], "text": "x"})
+
+    def test_image_page(self):
+        m = _tops(_doc(_p("가나")), {"op": "insert_image", "pos": [0, 1], "src": PNG, "width": 320})
+        self.assertEqual(m["blocks"][1], {"type": "img", "src": PNG, "width": 320}); self.assertEqual(len(m["blocks"]), 3)
+        self.assertEqual(hm.model(hm.render(m)), m)
+        fx = dict(m["blocks"][1], place="fixed", left=10, top=20, z=3)
+        m2 = _tops(_doc(fx), {"op": "set_image", "index": 0, "width": 99})
+        self.assertEqual(m2["blocks"][0], dict(fx, width=99))                          # 위치 값 그대로
+        inl = _doc({"type": "p", "runs": [{"text": "a"}, {"img": PNG}, {"text": "b"}]})
+        self.assertEqual(_tops(inl, {"op": "set_image", "pos": [0, 1], "width": 50})["blocks"][0]["runs"][1], {"img": PNG, "width": 50})
+        self.assertEqual(_tops(m, {"op": "set_image", "pos": [1, 0], "width": 7})["blocks"][1]["width"], 7)
+        self.assertEqual([b["type"] for b in _tops(m, {"op": "delete_block", "index": 1})["blocks"]], ["p", "p"])   # 그림 지우기
+        for op in ({"op": "insert_image", "pos": [0, 0], "src": "data:image/svg+xml;base64,AA=="}, {"op": "insert_image", "pos": [0, 0], "src": "http://x/a.png"},
+                   {"op": "insert_image", "pos": [0, 0], "src": PNG, "width": 0}, {"op": "insert_image", "pos": [0, 0], "src": PNG, "width": 5001},
+                   {"op": "insert_image", "pos": [0, 0], "src": 5}, {"op": "set_image", "index": 0, "width": 10},
+                   {"op": "set_image", "pos": [1, 0], "width": 10}, {"op": "set_image", "pos": [0, 0], "width": 10},
+                   {"op": "set_image", "index": 2, "pos": [2, 0], "width": 10}, {"op": "set_image", "width": 10},
+                   {"op": "set_image", "index": 2, "width": 5001}):
+            with self.assertRaises(ModelError, msg=op): _tops(_doc(_p("가"), _grid(1, 1), fx), op)
+        m = _tops(_doc(_p("x")), {"op": "set_page", "paper": "B5", "orient": "landscape", "margins": "10,15,20,25.5"})
+        self.assertEqual(m["meta"], {"paper": "B5", "orient": "landscape", "margins": "10,15,20,25.5"})
+        m = _tops(m, {"op": "set_page", "paper": "", "margins": ""}); self.assertEqual(m["meta"], {"orient": "landscape"})
+        for bad in ({}, {"paper": "Z9"}, {"orient": "up"}, {"margins": "101,0,0,0"}, {"margins": "1,2,3"}, {"paper": 4}, {"paper": None}):
+            with self.assertRaises(ModelError, msg=bad): _tops(_doc(_p("x")), dict({"op": "set_page"}, **bad))
+
+    def test_pure_and_limits(self):
+        d = _doc(_grid(2, 2)); keep = copy.deepcopy(d)
+        _tops(d, {"op": "table_merge", "index": 0, "r0": 0, "c0": 0, "r1": 1, "c1": 1}, {"op": "set_page", "paper": "A5"})
+        self.assertEqual(d, keep)                                                      # 입력 불변(순수)
+        big = _doc(_grid(200, 64, fill=False))
+        with self.assertRaisesRegex(ModelError, "작업량"):
+            hm.apply(big, [{"op": "table_insert_rows", "index": 0, "at": 0}, {"op": "table_delete_rows", "index": 0, "at": 0}] * 150)
+        with self.assertRaisesRegex(ModelError, "너무 큼"):
+            hm.apply(big, [{"op": "table_insert_cols", "index": 0, "at": 0, "n": 100}])  # 200×164 > 3만 칸
+        with self.assertRaisesRegex(ModelError, "줄 과다"):
+            hm.apply(_doc(_grid(4990, 1, fill=False)), [{"op": "table_insert_rows", "index": 0, "at": 0, "n": 20}])   # MAX_TROWS 5000
+
+class SupSub(unittest.TestCase):
+    def test_model(self):
+        m = core.model('<p>H<sub>2</sub>O x<sup>2</sup> <span style="vertical-align:super">a</span><span style="vertical-align:sub"><sup>b</sup></span></p>')
+        self.assertEqual(m["blocks"][0]["runs"], [{"text": "H"}, {"text": "2", "sub": True}, {"text": "O x"}, {"text": "2", "sup": True},
+                                                  {"text": " "}, {"text": "ab", "sup": True}])
+        self.assertEqual(core.model(core.render(m)), m)
+        self.assertIn("<sub>2</sub>", core.render(m)); self.assertEqual(core.plain_text(core.render(m)).strip(), "H2O x2 ab")
+        self.assertNotIn("sub", hm._run_norm({"text": "a", "sup": True, "sub": True}))
+        with self.assertRaises(ModelError): hm.validate(_doc({"type": "p", "runs": [{"text": "a", "sup": 1}]}))
+        with self.assertRaises(ModelError): _tops(_doc(_p("ab")), {"op": "set_style", "start": [0, 0], "end": [0, 1], "attrs": {"sup": True, "sub": True}})
+        m = _tops(_doc(_p("ab")), {"op": "set_style", "start": [0, 0], "end": [0, 2], "attrs": {"sup": True}},
+                  {"op": "set_style", "start": [0, 1], "end": [0, 2], "attrs": {"sub": True}})
+        self.assertEqual(m["blocks"][0]["runs"], [{"text": "a", "sup": True}, {"text": "b", "sub": True}])
+        m = _tops(m, {"op": "set_style", "start": [0, 0], "end": [0, 2], "attrs": {"sup": False, "sub": None}})
+        self.assertEqual(m["blocks"][0]["runs"], [{"text": "ab"}])
+        # 미주 표식(sup.fn)은 첨자가 아님
+        fm = core.model('<p>a<sup class="fn" contenteditable="false" data-fn="n1">1)</sup>b</p><div class="fnotes"><p class="fn-e" data-fn="n1"><span class="fn-no">1)</span> 노트</p></div>')
+        self.assertEqual(fm["blocks"][0]["runs"], [{"text": "a"}, {"endnote": "n1"}, {"text": "b"}])
+        tm = core.model('<table><tr><td>x<sup>2</sup>y<sup class="fn" data-fn="1">1)</sup>z</td></tr></table>')
+        self.assertEqual(tm["blocks"][0]["rows"][0][0]["runs"], [{"text": "x"}, {"text": "2", "sup": True}, {"text": "y1)z"}])
+    M = _doc({"type": "p", "runs": [{"text": "E=mc"}, {"text": "2", "sup": True}, {"text": " H"}, {"text": "2", "sub": True, "bold": True}, {"text": "O"}]},
+             {"type": "table", "rows": [[{"colspan": 1, "rowspan": 1, "runs": [{"text": "x"}, {"text": "n", "sub": True}]}]]})
+    def _runs(self, m): return [m["blocks"][0]["runs"], m["blocks"][1]["rows"][0][0]["runs"]]
+    def test_docx(self):
+        d = core.export_html(core.render(self.M), "docx")
+        x = zipfile.ZipFile(io.BytesIO(d)).read("word/document.xml").decode()
+        self.assertIn('<w:vertAlign w:val="superscript"/>', x); self.assertIn('<w:vertAlign w:val="subscript"/>', x)
+        self.assertEqual(self._runs(core.model(core.import_bytes(d, "docx"))), self._runs(self.M))
+    def test_hwpx_std(self):
+        d = core.export_html(core.render(self.M), "hwpx")
+        h = zipfile.ZipFile(io.BytesIO(d)).read("Contents/header.xml").decode()
+        self.assertIn("<hh:supscript/></hh:charPr>", h); self.assertIn("<hh:subscript/></hh:charPr>", h)
+        self.assertEqual(self._runs(core.model(core.import_bytes(d, "hwpx"))), self._runs(self.M))
+        if hwpxconv.HwpxDocument is not None:   # std writer → python-hwpx reader
+            self.assertEqual(self._runs(core.model(hwpxconv.import_hwpx(d))), self._runs(self.M))
+    def test_txt(self):
+        self.assertEqual(core.export_html(core.render(self.M), "txt").decode().split("\n")[0].strip(), "E=mc2 H2O")
+
+class ApplyCLI(unittest.TestCase):
+    def test_cli_apply(self):
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "a.html"); ops = os.path.join(td, "ops.json"); out = os.path.join(td, "o.json")
+            with open(src, "w") as f: f.write("<p>가나다</p>")
+            with open(ops, "w") as f: json.dump([{"op": "insert_table", "pos": [0, 1], "rows": 2, "cols": 2},
+                                                 {"op": "table_merge", "index": 1, "r0": 0, "c0": 0, "r1": 0, "c1": 1},
+                                                 {"op": "insert_text", "pos": [1, 1, 1, 0, 0], "text": "칸"},
+                                                 {"op": "set_style", "start": [0, 0], "end": [0, 1], "attrs": {"sup": True}},
+                                                 {"op": "insert_image", "pos": [3, 0], "src": PNG, "width": 10},
+                                                 {"op": "set_page", "paper": "A5"}], f)
+            r = subprocess.run([sys.executable, os.path.join(APP, "hanword"), "--json", "apply", src, ops, "-o", out], capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            with open(out) as f: m = json.load(f)
+            self.assertEqual([b["type"] for b in m["blocks"]], ["p", "table", "p", "img"]); self.assertEqual(m["meta"]["paper"], "A5")
+            self.assertEqual(m["blocks"][1]["rows"][1][1]["runs"], [{"text": "칸"}]); self.assertTrue(m["blocks"][0]["runs"][0]["sup"])
+            with open(ops, "w") as f: json.dump([{"op": "table_delete_rows", "index": 0, "at": 0}], f)
+            r = subprocess.run([sys.executable, os.path.join(APP, "hanword"), "--json", "apply", src, ops], capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 2); self.assertIn("표가 아님", r.stdout)
+
+
+class OpsAudit(unittest.TestCase):   # Opus 감사(feat-ops) 재현 박제
+    def test_cell_paras_linear(self):   # HIGH: 칸 연산마다 문단 전체 복사·재저장 → 9999 split 117s
+        import time
+        t = time.time()
+        m = hm.apply(_doc(_grid(1, 1, fill=False)), [{"op": "split_paragraph", "pos": [0, 0, 0, 0, 0]}] * 9999)
+        self.assertEqual(len(m["blocks"][0]["rows"][0][0]["paras"]), 10000)
+        m2 = hm.apply(m, [{"op": "insert_text", "pos": [0, 0, 0, 5000, 0], "text": "가"}] * 2000)
+        self.assertEqual(hm.block_text(m2["blocks"][0]["rows"][0][0]["paras"][5000]), "가" * 2000)
+        self.assertLess(time.time() - t, 3.0)
+    def test_cell_at_cached(self):   # MED: 칸 연산마다 격자 재구성 → 5000×6 표 6s
+        import time
+        d = _doc(_grid(5000, 6, fill=False)); t = time.time()
+        m = hm.apply(d, [{"op": "insert_text", "pos": [0, 4999, 5, 0, 0], "text": "x"}] * 3000
+                        + [{"op": "table_cell", "index": 0, "r": 4999, "c": 0, "bg": "#FFFFFF"}] * 1000)
+        self.assertLess(time.time() - t, 3.0)
+        self.assertEqual(m["blocks"][0]["rows"][4999][5]["runs"], [{"text": "x" * 3000}])
+        m = hm.apply(d, [{"op": "table_delete_rows", "index": 0, "at": 0, "n": 4998},   # 구조 연산 뒤 캐시 무효
+                         {"op": "insert_text", "pos": [0, 1, 0, 0, 0], "text": "y"}])
+        self.assertEqual(m["blocks"][0]["rows"][1][0]["runs"], [{"text": "y"}])
+    def test_collapse_keeps_align(self):   # LOW: 1문단으로 줄 때 문단 정렬 유지
+        d = _doc({"type": "table", "rows": [[{"colspan": 1, "rowspan": 1, "align": "left",
+                  "paras": [{"runs": [{"text": "a"}], "align": "right"}, {"runs": [{"text": "b"}]}]}]]})
+        m = hm.apply(d, [{"op": "delete_range", "start": [0, 0, 0, 0, 1], "end": [0, 0, 0, 1, 1]}])
+        self.assertEqual(m["blocks"][0]["rows"][0][0], {"colspan": 1, "rowspan": 1, "align": "right", "runs": [{"text": "a"}]})
+    def test_full_row_merge_exports(self):   # LOW: 줄 전체 병합 → 빈 [] 행 없음, DOCX·HWPX 행 수 일치
+        m = hm.apply(_doc(_p("x"), dict(_grid(3, 2), rowh=[10, 20, 30])),
+                     [{"op": "table_merge", "index": 1, "r0": 0, "c0": 0, "r1": 1, "c1": 1}])
+        t = m["blocks"][1]
+        self.assertEqual(_shape(t), [[(1, 2, "00 | 01 | 10 | 11")], [(1, 1, "20"), (1, 1, "21")]]); self.assertEqual(t["rowh"], [10, 30])
+        m = hm.apply(m, [{"op": "table_insert_rows", "index": 1, "at": 2},
+                         {"op": "table_merge", "index": 1, "r0": 1, "c0": 0, "r1": 2, "c1": 0}])   # 부분 병합 = rowspan 2 유지
+        self.assertEqual(_shape(m["blocks"][1]), [[(1, 2, "00 | 01 | 10 | 11")], [(2, 1, "20"), (1, 1, "21")], [(1, 1, "")]])
+        h = core.render(m)
+        x = zipfile.ZipFile(io.BytesIO(core.export_html(h, "docx"))).read("word/document.xml").decode()
+        trs = re.findall(r"<w:tr[ >].*?</w:tr>", x, re.S)
+        self.assertTrue(trs); self.assertTrue(all("<w:tc>" in tr or "<w:tc " in tr for tr in trs))
+        s = zipfile.ZipFile(io.BytesIO(core.export_html(h, "hwpx"))).read("Contents/section0.xml").decode()
+        for tbl in re.findall(r"<hp:tbl .*?</hp:tbl>", s, re.S):
+            self.assertEqual(int(re.search(r'rowCnt="(\d+)"', tbl).group(1)), tbl.count("<hp:tr>") + tbl.count("<hp:tr "))
+        self.assertEqual(core.model(h)["blocks"], m["blocks"])
+    def test_internal_typeerror_not_hidden(self):   # LOW: 인자 묶기 오류만 ModelError
+        with self.assertRaisesRegex(ModelError, "인자 오류"): hm.apply(_doc(_p("x")), [{"op": "set_page", "papr": "A4"}])
+        orig = hm.OPS["set_page"]
+        def boom(m, paper=None, orient=None, margins=None): raise TypeError("내부 버그")
+        hm.OPS["set_page"] = boom
+        try:
+            with self.assertRaises(TypeError): hm.apply(_doc(_p("x")), [{"op": "set_page", "paper": "A4"}])
+        finally: hm.OPS["set_page"] = orig
+
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--make-corpus"]:

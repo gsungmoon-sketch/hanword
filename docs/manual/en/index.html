@@ -3,7 +3,7 @@
 <title>hanword User Manual</title><link rel="stylesheet" href="../manual.css"></head><body>
 <nav class="top"><div class="in"><a href="#top"><b>Contents</b></a><a href="../index.html">Language</a><span class="sp"></span><a href="../ko/index.html">한국어</a></div></nav>
 <div class="wrap" id="top"><h1>hanword User Manual</h1>
-<p>Version 0.1.1. How to install, use and run hanword, a web word processor for Korean documents that opens and saves HWPX, DOCX, HTML and text. If you are new, read chapters 1 to 4 in order. Every chapter prints cleanly (save as PDF).</p>
+<p>Version 0.1.5. How to install, use and run hanword, a web word processor for Korean documents that opens and saves HWPX, DOCX, HTML and text. If you are new, read chapters 1 to 4 in order. Every chapter prints cleanly (save as PDF).</p>
 <ol class="toc">
 <li><a href="#overview">Overview</a></li><li><a href="#install">Installation</a></li><li><a href="#firstrun">First run</a></li><li><a href="#editor">Using the editor</a></li><li><a href="#formats">File formats and limits</a></li><li><a href="#backup">Document storage and backup</a></li><li><a href="#trouble">Troubleshooting</a></li><li><a href="#security">Security</a></li><li><a href="#cli">CLI reference</a></li><li><a href="#config">Configuration reference</a></li><li><a href="#licence">Licences and third-party</a></li></ol>
 
@@ -30,10 +30,10 @@
 <pre><code># Linux (file and SHA256SUMS in the same folder)
 sha256sum -c SHA256SUMS --ignore-missing
 # macOS
-shasum -a 256 hanword-0.1.1-macos-arm64.pkg
+shasum -a 256 hanword-0.1.5-macos-arm64.pkg
 # Windows (PowerShell or Command Prompt)
-Get-FileHash .\hanword-0.1.1-windows-x64-setup.exe -Algorithm SHA256
-certutil -hashfile hanword-0.1.1-windows-x64-setup.exe SHA256</code></pre>
+Get-FileHash .\hanword-0.1.5-windows-x64-setup.exe -Algorithm SHA256
+certutil -hashfile hanword-0.1.5-windows-x64-setup.exe SHA256</code></pre>
 <p>The printed value must equal the matching line in <code>SHA256SUMS</code>.</p>
 
 <h3>2.2 Windows</h3>
@@ -49,15 +49,15 @@ certutil -hashfile hanword-0.1.1-windows-x64-setup.exe SHA256</code></pre>
 <li>Data: <code>/Library/Application Support/hanword</code> · Logs: <code>/Library/Logs/hanword</code>.</li>
 <li>Uninstall: <code>sudo /usr/local/hanword/uninstall.sh [--purge]</code> (<code>--purge</code> also deletes data).</li></ol>
 <h3>2.4 Linux (systemd)</h3>
-<pre><code>tar xzf hanword-0.1.1-linux-x64.tar.gz
-cd hanword-0.1.1-linux-x64
+<pre><code>tar xzf hanword-0.1.5-linux-x64.tar.gz
+cd hanword-0.1.5-linux-x64
 sudo ./install.sh [--port N]</code></pre>
 <ul><li>Installs to <code>/opt/hanword</code>, command <code>/usr/local/bin/hanword</code>, data <code>/var/lib/hanword</code> (user <code>hanword</code>), unit <code>hanword.service</code>.</li>
 <li>Status: <code>systemctl status hanword</code> · Logs: <code>journalctl -u hanword</code></li>
 <li>Uninstall: <code>sudo /opt/hanword/uninstall.sh [--purge]</code></li></ul>
 <h3>2.5 Any OS: .pyz or source</h3>
 <pre><code># single file (.pyz)
-python hanword-0.1.1.pyz serve
+python hanword-0.1.5.pyz serve
 
 # from a source checkout
 git clone https://github.com/gsungmoon-sketch/hanword
@@ -217,14 +217,23 @@ hanword model report.docx &gt; report.model.json
 hanword render report.model.json out.html
 cat report.docx | hanword convert - out.hwpx --from docx</code></pre>
 <h3>apply: edit operations</h3>
-<p>A position is <code>[block index, character offset]</code> (0-based). Operations run in order; if any fails the whole call fails (naming the operation) and the input is untouched. Text inside locked blocks (tables, pictures, page breaks) cannot be edited.</p>
+<p>A position is <code>[block index, character offset]</code> (0-based). Operations run in order; if any fails the whole call fails (naming the operation) and the input is untouched. Text inside locked blocks (tables, pictures, page breaks) is not edited by plain positions; for text inside a table cell, the text operations (insert_text, delete_range, set_style, split_paragraph) also accept a cell position <code>[table block, row, col, cell paragraph, offset]</code> (row/col = grid coordinates, a merged cell is addressed by its top-left; start and end must be in the same cell). Table operations use grid coordinates too; structural operations first fill the missing slots of short rows with empty cells, and refuse tables whose spans overlap.</p>
 <table><tr><th>op</th><th>Arguments</th></tr>
 <tr><td><code>insert_text</code></td><td><code>pos</code>, <code>text</code></td></tr>
 <tr><td><code>delete_range</code></td><td><code>start</code>, <code>end</code> (start &lt; end)</td></tr>
-<tr><td><code>set_style</code></td><td><code>start</code>, <code>end</code>, <code>attrs</code>: bold/italic/underline/strike (true), color/highlight (#RRGGBB), size (1-400), font, link. A value of null or false removes it</td></tr>
+<tr><td><code>set_style</code></td><td><code>start</code>, <code>end</code>, <code>attrs</code>: bold/italic/underline/strike/sup/sub (true; sup and sub exclude each other), color/highlight (#RRGGBB), size (1-400), font, link. A value of null or false removes it</td></tr>
 <tr><td><code>set_block_type</code></td><td><code>index</code>, <code>type</code> (p/h1/h2/h3/li/div); optional <code>list</code> (bullet|number), <code>level</code> (li only), <code>align</code>, <code>indent</code></td></tr>
 <tr><td><code>split_paragraph</code></td><td><code>pos</code></td></tr><tr><td><code>merge_paragraph</code></td><td><code>index</code> (merges that block with the next)</td></tr>
-<tr><td><code>insert_pgbreak</code></td><td><code>pos</code></td></tr><tr><td><code>delete_block</code></td><td><code>index</code></td></tr><tr><td><code>insert_block</code></td><td><code>index</code>, <code>block</code></td></tr></table>
+<tr><td><code>insert_pgbreak</code></td><td><code>pos</code></td></tr><tr><td><code>delete_block</code></td><td><code>index</code></td></tr><tr><td><code>insert_block</code></td><td><code>index</code>, <code>block</code></td></tr>
+<tr><td><code>insert_table</code></td><td><code>pos</code>, <code>rows</code> (1-200), <code>cols</code> (1-64); splits the paragraph at pos</td></tr>
+<tr><td><code>table_insert_rows</code> / <code>table_delete_rows</code></td><td><code>index</code>, <code>at</code>, <code>n</code> (insert n &le; 100). A row inserted inside a merged cell grows its rowspan; deleting rows shrinks spans (a merged cell whose first row is deleted keeps its text); deleting the last row is refused (use delete_block)</td></tr>
+<tr><td><code>table_insert_cols</code> / <code>table_delete_cols</code></td><td><code>index</code>, <code>at</code>, <code>n</code> &mdash; same rules with colspan. When cells have widths, a new column gets the average width of its neighbours and the table width is kept (columns rescaled)</td></tr>
+<tr><td><code>table_merge</code></td><td><code>index</code>, <code>r0</code>, <code>c0</code>, <code>r1</code>, <code>c1</code> (grid, inclusive). Rectangles only: a merged cell crossing the edge is refused. Text = paragraphs of the non-empty cells in row order; format = first cell</td></tr>
+<tr><td><code>table_split</code></td><td><code>index</code>, <code>r</code>, <code>c</code> &mdash; a merged cell back to 1&times;1 cells; text stays in the first cell</td></tr>
+<tr><td><code>table_cell</code></td><td><code>index</code>, <code>r</code>, <code>c</code>; any of <code>runs</code> | <code>paras</code> ([{runs, align?}]), <code>bg</code> (#RRGGBB, "" clears), <code>align</code> ("" clears)</td></tr>
+<tr><td><code>insert_image</code></td><td><code>pos</code>, <code>src</code> (data:image/png|jpeg|gif|webp|bmp;base64), optional <code>width</code> (1-5000) &mdash; an image block (inline placement). Delete it with delete_block</td></tr>
+<tr><td><code>set_image</code></td><td><code>index</code> (image block) or <code>pos</code> (inline image run or image block), <code>width</code> (1-5000); position values are kept</td></tr>
+<tr><td><code>set_page</code></td><td>any of <code>paper</code>, <code>orient</code> (portrait|landscape), <code>margins</code> ("top,right,bottom,left" mm); "" clears</td></tr></table>
 <pre><code>[
   {"op":"insert_text","pos":[0,0],"text":"Title: "},
   {"op":"set_style","start":[0,0],"end":[0,5],"attrs":{"bold":true,"color":"#1f5fbf"}},
@@ -285,4 +294,4 @@ fonttools ttLib.woff2 compress original.ttf</code></pre>
 <li>Bundled JavaScript: html2canvas and jsPDF (see the repository NOTICE and file headers for their licences).</li>
 <li>Optional components are not bundled and keep their own licences. Note that <b>pyhwp is AGPL-3.0</b>; it is used only if you install it yourself.</li>
 <li>Hamchorom (Hancom) and UnBatang (GPL) are not included.</li></ul>
-<footer>hanword 0.1.1 manual · MIT licence · Screen names may differ slightly between versions.</footer></div></body></html>
+<footer>hanword 0.1.5 manual · MIT licence · Screen names may differ slightly between versions.</footer></div></body></html>

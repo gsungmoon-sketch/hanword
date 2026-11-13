@@ -38,6 +38,7 @@ python3 hanword roundtrip doc.docx --via hwpx     # exit 1 on loss
 python3 hanword --json model doc.hwpx > m.json
 python3 hanword apply m.json ops.json -o new.json
 python3 hanword render new.json out.docx
+python3 hanword render new.json out.hwpx --keep doc.hwpx   # same-format save: unchanged blocks keep their original XML
 ```
 Installed builds: `hanword serve`, `hanword convert …`, `hanword --version`.
 

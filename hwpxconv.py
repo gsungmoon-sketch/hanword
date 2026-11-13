@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# hwpxconv.py — python-hwpx로 HTML↔HWPX 변환.
+# hwpxconv.py — HTML↔HWPX 변환(기본 엔진 = 표준 라이브러리 hwpx_std, python-hwpx 는 선택적 폴백).
 #   export: stdin=에디터 HTML → stdout=.hwpx 바이트
 #   import: stdin=.hwpx 바이트 → stdout=HTML
 # RG DS 한워드(wp)가 ssh로 호출. 한글이 여는 정식 HWPX를 검증된 라이브러리로 생성.
 import sys, io, re, os, html as htmlmod, subprocess, tempfile, base64, shutil, zipfile, zlib
 from html.parser import HTMLParser
+from hanword_htmlparse import EofSafeParser
 try:
     from hwpx import HwpxDocument          # python-hwpx(lxml) — HWPX 입출력에만 필요. 없으면 문서모델(P)·DOCX는 계속 동작
 except ImportError:                        # pragma: no cover
@@ -207,24 +208,29 @@ def parse_style(s):
         elif k=="text-decoration" or k=="text-decoration-line":
             if "underline" in v: d["underline"]=True
             if "line-through" in v: d["strike"]=True
+        elif k=="vertical-align":   # 위/아래 첨자(D12)
+            if v.startswith("super"): d["sup"]=True
+            elif v.startswith("sub"): d["sub"]=True
     return d
 
 MAX_CPARAS=10000   # 셀 하나의 문단 수 상한(변환기·모델 공용) — 넘으면 마지막 문단에 " "로 이어 붙임
 MAX_CALIGN=64      # 셀 안 블록 정렬 스택 깊이 상한(닫히지 않은 블록 시작 누적 차단)
-_M0={"bold":False,"italic":False,"underline":False,"strike":False,"color":None,"size":None,"highlight":None,"font":None,"link":None}
+_M0={"bold":False,"italic":False,"underline":False,"strike":False,"sup":False,"sub":False,"color":None,"size":None,"highlight":None,"font":None,"link":None}
 class _MStack(list):   # 인라인 서식 스택 + 단계별 병합 결과 캐시 → merged()=O(1)(텍스트 노드×스택 깊이 2차시간 차단)
     def __init__(self): super().__init__(); self._m=[_M0]
     def append(self, d):
         m=dict(self._m[-1])
         for k,v in d.items():
             if k in("bold","italic","underline","strike"): m[k]=m[k] or v
+            elif k in("sup","sub"):   # 위/아래 첨자 = 서로 배타(안쪽이 이김)
+                if v: m[k]=True; m["sub" if k=="sup" else "sup"]=False
             elif v is not None: m[k]=v
         self._m.append(m); super().append(d)
     def pop(self, *a):
         self._m.pop(); return super().pop()
     def top(self): return self._m[-1]
 
-class P(HTMLParser):
+class P(EofSafeParser):   # close() 꼬리 선형화(옛 html.parser 2차 시간)
     SKIP={"head","title","style","script","noscript"}   # 비콘텐츠 컨테이너(끝태그 있음)=깊이추적 스킵
     SKIP_VOID={"meta","link","base"}                     # 비콘텐츠 void(끝태그 없음)=깊이추적 금지(안 그러면 skip 영구상승→본문 소실)
     def __init__(self):
@@ -238,10 +244,12 @@ class P(HTMLParser):
         elif tag in("i","em"): self.stack.append({"italic":True})
         elif tag=="u": self.stack.append({"underline":True})
         elif tag in("s","strike","del"): self.stack.append({"strike":True})
+        elif tag=="sup": self.stack.append({"sup":True})
+        elif tag=="sub": self.stack.append({"sub":True})
         elif tag in("span","font"):
             d=parse_style(ad.get("style",""))
             if ad.get("color"): d["color"]=rgb2hex(ad["color"])
-            self.stack.append({k:v for k,v in d.items() if k in("bold","italic","underline","strike","color","size","highlight","font")})
+            self.stack.append({k:v for k,v in d.items() if k in("bold","italic","underline","strike","sup","sub","color","size","highlight","font")})
         elif tag=="a":   # #20 하이퍼링크: href를 run에 실어 export에서 필드컨트롤로(상대/# 등 비절대는 텍스트만)
             h=_safe_link_url(ad.get("href"))
             self.stack.append({"link":h} if h else {})
@@ -288,6 +296,7 @@ class P(HTMLParser):
                 if self.block is None: self._newpara("p",[])
                 self.block["runs"].append({"endnote": ad.get("data-fn") or "", "text":""})
                 self._fnskip+=1
+            elif self.curcell is not None: self.stack.append({})   # 표 안 미주 마커 = 끝태그 sup의 pop 짝
             return
         # ── 개체 배치: objline 래퍼(글자처럼 줄)는 문단 만들지 않고 정렬만 캡처 ──
         if tag=="div" and "objline" in (ad.get("class") or ""):
@@ -370,7 +379,7 @@ class P(HTMLParser):
             elif tag=="table":
                 if self._tnest>0: self._tnest-=1; return     # 중첩 표 닫힘=바깥 표 유지
                 self.paras.append(self.table); self.table=None; self.curcell=None; self.trow=None; self._objalign=None
-            elif self.curcell is not None and tag in("b","strong","i","em","u","s","strike","del","span","font","a"):
+            elif self.curcell is not None and tag in("b","strong","i","em","u","s","strike","del","span","font","a","sup","sub"):
                 if self.stack: self.stack.pop()
             elif self.curcell is not None and tag in BLOCK and self._tnest==0:
                 self._cclose()
@@ -380,7 +389,7 @@ class P(HTMLParser):
         if tag in("ul","ol"):
             if self.lk: self.lk.pop()
         elif tag in BLOCK: self.flush()
-        elif tag in("b","strong","i","em","u","s","strike","del","span","font","a"):
+        elif tag in("b","strong","i","em","u","s","strike","del","span","font","a","sup","sub"):
             if self.stack: self.stack.pop()
     def handle_data(self, data):
         if self.skip: return                          # head/style/script 내부 텍스트 버림
@@ -1127,6 +1136,8 @@ def _runs_to_html(doc, runs, heading=False, fncol=None):   # run 목록→inner 
                 if sh and sh.upper() not in("NONE","#FFFFFF"): style+="background-color:%s;"%sh
                 ca=getattr(rs,"child_attributes",None) or {}
                 if (ca.get("strikeout") or {}).get("shape","NONE")!="NONE": t="<s>%s</s>"%t
+                if "supscript" in ca: t="<sup>%s</sup>"%t          # 위/아래 첨자(D12)
+                elif "subscript" in ca: t="<sub>%s</sub>"%t
                 fid=(ca.get("fontRef") or {}).get("hangul")      # 폰트 보존: fontRef→face명(+NotoKR 폴백)
                 fname=_font_map(doc).get(fid) if fid is not None else None
                 if fname and fname not in _DEFAULT_FACES:   # 작은따옴표=style 속성(큰따옴표) 안에서 안전

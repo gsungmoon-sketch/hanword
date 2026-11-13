@@ -8,7 +8,9 @@ const fs = require('fs');
 
 (async () => {
   const FBASE = process.env.WP_FONT_URL || ('http://127.0.0.1:' + (process.env.WP_PORT || '8088') + '/font');
-  const ff  = (fam, file, w) => `@font-face{font-family:'${fam}';${w?'font-weight:'+w+';':''}src:url('${FBASE}/${file}') format('woff2');}`;
+  const NANUM_TTF = { 'NanumGothic-400.woff2': 'NanumGothic-Regular.ttf', 'NanumGothic-700.woff2': 'NanumGothic-Bold.ttf',
+                      'NanumMyeongjo-400.woff2': 'NanumMyeongjo-Regular.ttf', 'NanumMyeongjo-700.woff2': 'NanumMyeongjo-Bold.ttf' };   // 공개·임베드 빌드 = 원본 TTF(웹 서브셋 미배포)
+  const ff  = (fam, file, w) => `@font-face{font-family:'${fam}';${w?'font-weight:'+w+';':''}src:url('${FBASE}/${file}') format('woff2')${NANUM_TTF[file] ? `, url('${FBASE}/${NANUM_TTF[file]}') format('truetype')` : ''};}`;
   // NotoKR=풀 NotoSansKR.ttf(원문자 ①·화살표 →·한자까지 커버 → 모든 스택 끝 만능 폴백)
   const FONTFACE = [
     `@font-face{font-family:'NotoKR';src:url('${FBASE}/NotoSansKR.ttf') format('truetype');}`,
@@ -33,6 +35,7 @@ const fs = require('fs');
   // 머리말/꼬리말/쪽번호 메타(숨김 div) 추출 + 본문에서 제거
   function unesc(s){ return String(s).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&'); }
   var meta = { header:'', footer:'', pagenum:'', pnFormat:'1', pnStart:1, headerOdd:'', headerEven:'' };
+  const PAPERS = { A3:[297,420], A4:[210,297], A5:[148,210], A6:[105,148], B4:[257,364], B5:[182,257], B6:[128,182], Letter:[215.9,279.4], Legal:[215.9,355.6], Tabloid:[279.4,431.8] };
   body = body.replace(/<div id="wpmeta"([^>]*)>[\s\S]*?<\/div>/, function(_, a){
     var g = function(k){ var m = a.match(new RegExp('data-'+k+'="([^"]*)"')); return m ? unesc(m[1]) : ''; };
     meta.header = g('header'); meta.footer = g('footer'); meta.pagenum = g('pagenum');
@@ -43,6 +46,14 @@ const fs = require('fs');
     var pb = g('pageborder');
     meta.pageBorder = /^(solid|dotted|dashed|double)$/.test(pb) ? pb : '';
     meta.pageBorderW = Math.min(3, Math.max(1, parseInt(g('pageborder-w'), 10) || 1));
+    // 용지·여백(2026-11-13, 공문서 30/20/15/15 등) — 편집기 wpmeta 규칙과 같은 화이트리스트, 허용 밖 = A4·20mm
+    var pp = g('paper'), mg = g('margins');
+    if (Object.prototype.hasOwnProperty.call(PAPERS, pp)) meta.paper = pp;
+    if (g('orient') === 'landscape') meta.landscape = true;
+    if (/^\d{1,3}(\.\d)?(,\d{1,3}(\.\d)?){3}$/.test(mg)) {
+      var a = mg.split(',').map(Number);
+      if (a.every(function (x) { return x >= 0 && x <= 100; })) meta.margins = a;
+    }
     return '';
   });
   // 쪽 테두리: position:fixed 요소는 Chromium 인쇄에서 모든 쪽에 반복 → 여백 안 본문 영역 사각형
@@ -127,6 +138,12 @@ sup.fn{color:#1d4ed8;font-size:.72em;}
 table{border-collapse:collapse;margin:.4em 0;} td{border:1px solid #555;padding:4px 8px;}
 img{max-width:100%;}
 </style></head><body>${body}</body></html>`;
+  const PW = (function () {   // 용지 치수·여백(mm) → page.pdf 옵션
+    var wh = PAPERS[meta.paper || 'A4'], w = wh[0], h = wh[1];
+    if (meta.landscape) { var t = w; w = h; h = t; }
+    var m = meta.margins || [20, 20, 20, 20];   // 위,오른쪽,아래,왼쪽
+    return { width: w + 'mm', height: h + 'mm', margin: { top: m[0] + 'mm', right: m[1] + 'mm', bottom: m[2] + 'mm', left: m[3] + 'mm' } };
+  })();
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ javaScriptEnabled: false });   // 신뢰불가 문서의 스크립트 실행 차단
@@ -143,8 +160,7 @@ img{max-width:100%;}
     await page.emulateMedia({ media: 'print' });
     if (extended){   // #21 확장 경로: HF 없이 렌더 → 스탬핑. 실패(pdf-lib 부재 등) 시 네이티브 폴백.
       try {
-        const raw = await page.pdf({ format: 'A4', printBackground: true,
-          margin: { top: '20mm', bottom: '20mm', left: '20mm', right: '20mm' } });
+        const raw = await page.pdf({ width: PW.width, height: PW.height, printBackground: true, margin: PW.margin });
         process.stdout.write(await stampPdf(raw, meta));
         return;   // finally에서 browser.close()
       } catch (e) { process.stderr.write('[htmlpdf] 스탬핑 폴백(네이티브 아라비아): ' + e + '\n'); }
@@ -158,9 +174,9 @@ img{max-width:100%;}
     var hT = '<div style="font-size:9px;width:100%;padding:0 18mm;text-align:center;color:#555;">' + esc(meta.header) + '</div>';
     var fT = '<div style="font-size:9px;width:100%;padding:0 18mm;text-align:' + (pnAlign || 'center') + ';color:#555;">' + footInner + '</div>';
     const pdf = await page.pdf({
-      format: 'A4', printBackground: true,
+      width: PW.width, height: PW.height, printBackground: true,
       displayHeaderFooter: hasHF, headerTemplate: hT, footerTemplate: fT,
-      margin: { top: '20mm', bottom: '20mm', left: '20mm', right: '20mm' }
+      margin: PW.margin
     });
     process.stdout.write(pdf);
   } finally {

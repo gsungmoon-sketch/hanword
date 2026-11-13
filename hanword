@@ -3,13 +3,20 @@
 
   hanword [--json] formats
   hanword [--json] convert IN OUT [--from F] [--to F] [--paper A4] [--orient portrait|landscape] [--pdf-mode text|image]
+       [--keep ORIG [--keep-sha SHA256] | --no-keep]   # 같은 형식 저장: 바뀌지 않은 덩이 = ORIG의 원본 XML 그대로(K2)
+  hanword [--json] keep-index FILE       # 원본 덩이 색인(sha256·덩이 해시·조각 위치) — 열 때 곁 기록용
   hanword [--json] info FILE
   hanword [--json] check FILE            # 파싱+검증, error 있으면 종료코드 1
   hanword [--json] roundtrip FILE [--via hwpx|docx|html]   # 손실 있으면 종료코드 1
   hanword [--json] model FILE|-          # 문서모델(JSON) 덤프(--json=한 줄). FILE=문서(html/hwpx/hwp/docx/txt/pdf)
-  hanword [--json] render MODEL.json|- OUT|-      # 모델 → 에디터 HTML(OUT 확장자가 .docx/.hwpx/.txt/.pdf면 그 형식)
+  hanword [--json] render MODEL.json|- OUT|- [--keep ORIG [--keep-sha SHA256] | --no-keep]
+                                         # 모델 → 에디터 HTML(OUT 확장자가 .docx/.hwpx/.txt/.pdf면 그 형식)
   hanword [--json] apply MODEL|- OPS.json|- [-o OUT]  # 편집 연산 적용 → 새 모델 JSON(stdout 또는 OUT). MODEL은 .json 또는 문서
                                          #   OPS = [{"op":"insert_text","pos":[0,3],"text":"가"}, ...]
+                                         #   연산: insert_text delete_range set_style set_block_type split_paragraph merge_paragraph
+                                         #   insert_pgbreak delete_block insert_block insert_table table_insert_rows table_delete_rows
+                                         #   table_insert_cols table_delete_cols table_merge table_split table_cell insert_image
+                                         #   set_image set_page (위치 [블록,offset] | 표 칸 [블록,줄,칸,문단,offset]) — 안내서 apply 표
   hanword [--json] debug state|log|snapshot|eval JS|cmd OP [--arg A] [--port 8088]
                                          # 로컬 DEBUG 서버 전용(WP_DEBUG=1, 비공개). 꺼져 있으면 거부(종료코드 3)
 종료코드: 0 성공 / 1 검사·왕복 결함 / 2 사용법·입력 오류 / 3 디버그 비활성
@@ -59,6 +66,21 @@ def cmd_formats(a):
     emit(a, {"ok": True, "in": core.FORMATS_IN, "out": core.FORMATS_OUT},
          "in : %s\nout: %s" % (" ".join(core.FORMATS_IN), " ".join(core.FORMATS_OUT)))
 
+def export_out(a, html_or_model, html, dst, page=None):
+    """--keep ORIG(같은 형식) = core.export_keep, 그 밖 = export_html. → (bytes, kept report|None)"""
+    if getattr(a, "keep", None) and not a.no_keep and dst in ("hwpx", "docx"):
+        orig = read(a.keep)
+        return core.export_keep(orig, html_or_model, dst, orig_sha256=a.keep_sha, page=page)
+    return core.export_html(html, dst, page=page), None
+
+def _kept_h(k):
+    if not k: return ""
+    return "  keep=%s(덩이 유지 %d · 다시 %s%s)" % (k["level"], k["kept_blocks"], k["regenerated"], (" · " + k["why"]) if k.get("why") else "")
+
+def cmd_keep_index(a):
+    r = core.keep_index(read(a.file), name=a.file); r["ok"] = True
+    emit(a, r, "%s  %s  sha256 %s  덩이 %d · 요소 %d" % (a.file, r["format"], r["sha256"], len(r["blocks"]), len(r["groups"])))
+
 def cmd_convert(a):
     data = read(a.input)
     src = a.src or core.detect(data, a.input)
@@ -67,11 +89,12 @@ def cmd_convert(a):
     t0 = time.time()
     html = core.import_bytes(data, src, a.input, a.pdf_mode)
     page = {"paper": a.paper, "orient": a.orient} if (a.paper or a.orient) else None
-    out = core.export_html(html, dst, page=page)
+    out, kept = export_out(a, html, html, dst, page)
     if a.output == "-": sys.stdout.buffer.write(out); return
     with open(a.output, "wb") as f: f.write(out)
-    emit(a, {"ok": True, "from": src, "to": dst, "in_bytes": len(data), "out_bytes": len(out), "ms": int((time.time() - t0) * 1000)},
-         "%s → %s  %s (%d bytes)" % (src, dst, a.output, len(out)))
+    r = {"ok": True, "from": src, "to": dst, "in_bytes": len(data), "out_bytes": len(out), "ms": int((time.time() - t0) * 1000)}
+    if kept is not None: r["kept"] = kept
+    emit(a, r, "%s → %s  %s (%d bytes)%s" % (src, dst, a.output, len(out), _kept_h(kept)))
 
 def cmd_info(a):
     r = core.info(read(a.file), name=a.file); r["ok"] = True
@@ -104,9 +127,11 @@ def cmd_render(a):
     html = core.render(m)
     fmt = fmt_of(a.output, a.to) if a.output != "-" else (a.to or "html")
     if fmt not in core.FORMATS_OUT: fail(a, "출력 형식 미지원: %s" % fmt)
-    out = core.export_html(html, fmt)
+    out, kept = export_out(a, m, html, fmt)
     write_out(a.output, out)
-    if a.output != "-": emit(a, {"ok": True, "to": fmt, "out_bytes": len(out), "blocks": len(m["blocks"])}, "render → %s %s (%d bytes)" % (fmt, a.output, len(out)))
+    r = {"ok": True, "to": fmt, "out_bytes": len(out), "blocks": len(m["blocks"])}
+    if kept is not None: r["kept"] = kept
+    if a.output != "-": emit(a, r, "render → %s %s (%d bytes)%s" % (fmt, a.output, len(out), _kept_h(kept)))
 
 def cmd_apply(a):
     if a.model == "-" and a.ops == "-": fail(a, "MODEL과 OPS를 둘 다 stdin으로 줄 수 없음")
@@ -156,6 +181,9 @@ def main():
     c.add_argument("--paper"); c.add_argument("--orient", choices=("portrait", "landscape"))
     c.add_argument("--pdf-mode", default="text", choices=("text", "image")); c.set_defaults(fn=cmd_convert)
     rr = sp.add_parser("render"); rr.add_argument("model"); rr.add_argument("output"); rr.add_argument("--to", choices=core.FORMATS_OUT); rr.set_defaults(fn=cmd_render)
+    for p in (c, rr):   # 원본 되씀: --keep ORIG(같은 형식일 때만), --no-keep = 늘 다시 만들기(기본도 다시 만들기)
+        p.add_argument("--keep", metavar="ORIG"); p.add_argument("--keep-sha", metavar="SHA256"); p.add_argument("--no-keep", action="store_true")
+    ki = sp.add_parser("keep-index"); ki.add_argument("file"); ki.set_defaults(fn=cmd_keep_index)
     ap_ = sp.add_parser("apply"); ap_.add_argument("model"); ap_.add_argument("ops"); ap_.add_argument("-o", dest="out"); ap_.set_defaults(fn=cmd_apply)
     for n, f in (("info", cmd_info), ("check", cmd_check), ("model", cmd_model)):
         p = sp.add_parser(n); p.add_argument("file"); p.set_defaults(fn=f)

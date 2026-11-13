@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>한워드</title>
-<link rel="stylesheet" href="/editor.css">
+<link rel="stylesheet" href="editor.css">
 <meta name="description" content="한워드 — 설치 없이 브라우저에서 바로 쓰는 무료 한글 워드프로세서. HWPX·PDF·HTML 변환, 자동 저장, 한글 서식 편집.">
 <meta name="keywords" content="한글 워드프로세서, 온라인 워드, 무료 워드프로세서, 웹 문서편집기, HWPX, 한워드, hwp 변환, hanword">
 <meta name="robots" content="index, follow">
@@ -276,6 +276,12 @@
         </select></div>
       <div class="frow"><label>용지 방향</label>
         <span class="seg" id="pg-orient"><button data-or="portrait">세로</button><button data-or="landscape">가로</button></span></div>
+      <div class="frow"><label>여백 미리 설정</label>
+        <select id="pg-preset" title="여백 묶음 설정(선택 시 아래 여백 칸을 채움)">
+          <option value="">직접 입력</option>
+          <option value="default">기본 (사방 20mm)</option>
+          <option value="gov">공문서 A4 (위30·왼20·오15·아래15)</option>
+        </select></div>
       <div class="frow"><label>위/아래 여백</label>
         <input id="pg-mt" type="number" min="0" max="60" value="20"> / <input id="pg-mb" type="number" min="0" max="60" value="20"> mm</div>
       <div class="frow"><label>왼/오른 여백</label>
@@ -513,19 +519,20 @@
 
   <div id="toast" class="hidden"></div>
 
-<script src="/wp-core.js"></script>
-<script src="/wp-format.js"></script>
-<script src="/wp-table.js"></script>
-<script src="/wp-find.js"></script>
-<script src="/wp-io.js"></script>
-<script src="/wp-input.js"></script>
-<script src="/wp-obj.js"></script>
-<script src="/wp-ruler.js"></script>
-<script src="/wp-page.js"></script>
-<script src="/wp-preview.js"></script>
-<script src="/wp-fullview.js"></script>
-<script src="/wp-print.js"></script>
-<script src="/wp-board.js"></script>
-<script>if(location.search.indexOf("debug=1")>=0){var s=document.createElement("script");s.src="/debug.js";document.body.appendChild(s);}</script>
+<script src="wp-core.js"></script>
+<script src="wp-format.js"></script>
+<script src="wp-table.js"></script>
+<script src="wp-find.js"></script>
+<script src="wp-io.js"></script>
+<script src="wp-input.js"></script>
+<script src="wp-obj.js"></script>
+<script src="wp-ruler.js"></script>
+<script src="wp-page.js"></script>
+<script src="wp-preview.js"></script>
+<script src="wp-fullview.js"></script>
+<script src="wp-print.js"></script>
+<script src="wp-board.js"></script>
+<script src="wp-embed.js"></script>
+<script>if(/[?&]debug=1(&|$)/.test(location.search)&&!/[?&]embed=1(&|$)/.test(location.search)){var s=document.createElement("script");s.src="/debug.js";document.body.appendChild(s);}</script>
 </body>
 </html>
