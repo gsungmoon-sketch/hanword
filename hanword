@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""hanword — 한워드 문서 CLI (브라우저 없이 같은 코어 함수 사용: hanword_core).
+
+  hanword [--json] formats
+  hanword [--json] convert IN OUT [--from F] [--to F] [--paper A4] [--orient portrait|landscape] [--pdf-mode text|image]
+  hanword [--json] info FILE
+  hanword [--json] check FILE            # 파싱+검증, error 있으면 종료코드 1
+  hanword [--json] roundtrip FILE [--via hwpx|docx|html]   # 손실 있으면 종료코드 1
+  hanword [--json] model FILE|-          # 문서모델(JSON) 덤프(--json=한 줄). FILE=문서(html/hwpx/hwp/docx/txt/pdf)
+  hanword [--json] render MODEL.json|- OUT|-      # 모델 → 에디터 HTML(OUT 확장자가 .docx/.hwpx/.txt/.pdf면 그 형식)
+  hanword [--json] apply MODEL|- OPS.json|- [-o OUT]  # 편집 연산 적용 → 새 모델 JSON(stdout 또는 OUT). MODEL은 .json 또는 문서
+                                         #   OPS = [{"op":"insert_text","pos":[0,3],"text":"가"}, ...]
+  hanword [--json] debug state|log|snapshot|eval JS|cmd OP [--arg A] [--port 8088]
+                                         # 로컬 DEBUG 서버 전용(WP_DEBUG=1, 비공개). 꺼져 있으면 거부(종료코드 3)
+종료코드: 0 성공 / 1 검사·왕복 결함 / 2 사용법·입력 오류 / 3 디버그 비활성
+"""
+import os, sys, json, argparse, time, urllib.request, urllib.error
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import hanword_core as core
+
+def emit(args, obj, human=None):
+    if args.json or human is None:
+        print(json.dumps(obj, ensure_ascii=False, indent=None if args.json else 2))
+    else:
+        print(human)
+
+def fail(args, msg, code=2):
+    if args.json: print(json.dumps({"ok": False, "err": msg}, ensure_ascii=False))
+    else: sys.stderr.write("hanword: %s\n" % msg)
+    sys.exit(code)
+
+MAX_IN = 200 * 1024 * 1024
+def read(path):
+    if path == "-":
+        data = sys.stdin.buffer.read(MAX_IN + 1)
+    else:
+        with open(path, "rb") as f: data = f.read(MAX_IN + 1)
+    if len(data) > MAX_IN: raise core.InputError("입력이 너무 큼")
+    return data
+
+def load_model(path):   # .json(모델) 또는 문서 파일 → 검증된 모델
+    data = read(path)
+    if path.lower().endswith(".json") or (path == "-" and data.lstrip()[:1] == b"{"):
+        return core.hanword_model.loads(data)
+    return core.model(core.import_bytes(data, None, path))
+
+def write_out(out, data):
+    if out == "-": sys.stdout.buffer.write(data); sys.stdout.buffer.flush()
+    else:
+        with open(out, "wb") as f: f.write(data)
+
+def fmt_of(path, given=None):
+    if given: return given
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return core.EXT.get(ext)
+
+def cmd_formats(a):
+    emit(a, {"ok": True, "in": core.FORMATS_IN, "out": core.FORMATS_OUT},
+         "in : %s\nout: %s" % (" ".join(core.FORMATS_IN), " ".join(core.FORMATS_OUT)))
+
+def cmd_convert(a):
+    data = read(a.input)
+    src = a.src or core.detect(data, a.input)
+    dst = fmt_of(a.output, a.to)
+    if dst not in core.FORMATS_OUT: fail(a, "출력 형식 미지원/판별불가: %s" % dst)
+    t0 = time.time()
+    html = core.import_bytes(data, src, a.input, a.pdf_mode)
+    page = {"paper": a.paper, "orient": a.orient} if (a.paper or a.orient) else None
+    out = core.export_html(html, dst, page=page)
+    if a.output == "-": sys.stdout.buffer.write(out); return
+    with open(a.output, "wb") as f: f.write(out)
+    emit(a, {"ok": True, "from": src, "to": dst, "in_bytes": len(data), "out_bytes": len(out), "ms": int((time.time() - t0) * 1000)},
+         "%s → %s  %s (%d bytes)" % (src, dst, a.output, len(out)))
+
+def cmd_info(a):
+    r = core.info(read(a.file), name=a.file); r["ok"] = True
+    s = r["stats"]
+    emit(a, r, "%s  %s  %d bytes\n제목: %s\n문단 %d · 제목 %d · 목록 %d · 표 %d(셀 %d) · 그림 %d · 링크 %d · 미주 %d · 쪽나눔 %d · 글자 %d%s" % (
+        a.file, r["format"], r["bytes"], r["title_guess"], s["paragraphs"], s["headings"], s["list_items"], s["tables"], s["cells"],
+        s["images"], s["links"], s["endnotes"], s["pgbreaks"], s["chars"],
+        ("\n개요: " + " / ".join(r["outline"][:10])) if r["outline"] else ""))
+
+def cmd_check(a):
+    r = core.check(read(a.file), name=a.file)
+    lines = ["%s  %s  %s" % (a.file, r["format"], "OK" if r["ok"] else "FAIL")]
+    lines += ["  [%s] %s" % (i["level"], i["msg"]) for i in r["issues"]]
+    emit(a, r, "\n".join(lines))
+    sys.exit(0 if r["ok"] else 1)
+
+def cmd_roundtrip(a):
+    r = core.roundtrip(read(a.file), via=a.via, name=a.file)
+    h = "%s  %s →%s→ 재가져오기: %s  유사도 %.4f%s" % (a.file, r["format"], r["via"], "OK" if r["ok"] else "LOSS", r["text_similarity"],
+                                                  "".join("\n  %s: %s → %s" % (k, v[0], v[1]) for k, v in r["diff"].items()))
+    if r["text_diff"] and not a.json: h += "\n  " + "\n  ".join(r["text_diff"][:8])
+    emit(a, r, h)
+    sys.exit(0 if r["ok"] else 1)
+
+def cmd_model(a):
+    print(json.dumps(load_model(a.file), ensure_ascii=False, indent=None if a.json else 1))
+
+def cmd_render(a):
+    m = load_model(a.model)
+    html = core.render(m)
+    fmt = fmt_of(a.output, a.to) if a.output != "-" else (a.to or "html")
+    if fmt not in core.FORMATS_OUT: fail(a, "출력 형식 미지원: %s" % fmt)
+    out = core.export_html(html, fmt)
+    write_out(a.output, out)
+    if a.output != "-": emit(a, {"ok": True, "to": fmt, "out_bytes": len(out), "blocks": len(m["blocks"])}, "render → %s %s (%d bytes)" % (fmt, a.output, len(out)))
+
+def cmd_apply(a):
+    if a.model == "-" and a.ops == "-": fail(a, "MODEL과 OPS를 둘 다 stdin으로 줄 수 없음")
+    m = load_model(a.model)
+    try: ops = json.loads(read(a.ops).decode("utf-8"))
+    except ValueError as e: fail(a, "OPS JSON 오류: %s" % e)
+    m2 = core.apply_ops(m, ops)
+    data = json.dumps(m2, ensure_ascii=False, indent=None if a.json else 1).encode("utf-8")
+    if a.out:
+        write_out(a.out, data)
+        emit(a, {"ok": True, "ops": len(ops), "blocks": len(m2["blocks"])}, "applied %d ops → %s" % (len(ops), a.out))
+    else:
+        sys.stdout.buffer.write(data + b"\n")
+
+def _http(port, path, body=None):
+    url = "http://127.0.0.1:%d%s" % (port, path)
+    req = urllib.request.Request(url, data=(json.dumps(body).encode() if body is not None else None),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r: return r.read().decode("utf-8", "replace")
+
+def cmd_debug(a):
+    try: _http(a.port, "/api/debug/state")
+    except urllib.error.HTTPError as e:
+        fail(a, "디버그 비활성(서버 WP_DEBUG=0 또는 공개모드) — 거부", 3)
+    except Exception as e:
+        fail(a, "서버 연결 실패(127.0.0.1:%d): %s" % (a.port, e), 3)
+    if a.what == "state": print(_http(a.port, "/api/debug/state")); return
+    if a.what == "log": sys.stdout.write(_http(a.port, "/api/debug/log")); return
+    cmd = {"op": a.what if a.what in ("snapshot", "eval") else (a.rest[0] if a.rest else "state")}
+    if a.what == "eval": cmd["js"] = " ".join(a.rest)
+    if a.arg is not None: cmd["arg"] = a.arg
+    cid = json.loads(_http(a.port, "/api/debug/cmd", cmd))["id"]
+    for _ in range(100):   # 페이지(?debug=1)가 폴링·실행할 때까지 최대 10초
+        r = json.loads(_http(a.port, "/api/debug/result?id=%d" % cid))
+        if not (isinstance(r, dict) and r.get("pending")):
+            print(json.dumps(r, ensure_ascii=False)); return
+        time.sleep(0.1)
+    fail(a, "응답 없음 — ?debug=1 페이지가 열려 있어야 함", 3)
+
+def main():
+    ap = argparse.ArgumentParser(prog="hanword", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--json", action="store_true", help="기계용 JSON 한 줄 출력")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    sp.add_parser("formats").set_defaults(fn=cmd_formats)
+    c = sp.add_parser("convert"); c.add_argument("input"); c.add_argument("output")
+    c.add_argument("--from", dest="src", choices=core.FORMATS_IN); c.add_argument("--to", choices=core.FORMATS_OUT)
+    c.add_argument("--paper"); c.add_argument("--orient", choices=("portrait", "landscape"))
+    c.add_argument("--pdf-mode", default="text", choices=("text", "image")); c.set_defaults(fn=cmd_convert)
+    rr = sp.add_parser("render"); rr.add_argument("model"); rr.add_argument("output"); rr.add_argument("--to", choices=core.FORMATS_OUT); rr.set_defaults(fn=cmd_render)
+    ap_ = sp.add_parser("apply"); ap_.add_argument("model"); ap_.add_argument("ops"); ap_.add_argument("-o", dest="out"); ap_.set_defaults(fn=cmd_apply)
+    for n, f in (("info", cmd_info), ("check", cmd_check), ("model", cmd_model)):
+        p = sp.add_parser(n); p.add_argument("file"); p.set_defaults(fn=f)
+    r = sp.add_parser("roundtrip"); r.add_argument("file"); r.add_argument("--via", choices=("hwpx", "docx", "html")); r.set_defaults(fn=cmd_roundtrip)
+    d = sp.add_parser("debug"); d.add_argument("what", choices=("state", "log", "snapshot", "eval", "cmd"))
+    d.add_argument("rest", nargs="*"); d.add_argument("--arg"); d.add_argument("--port", type=int, default=int(os.environ.get("WP_PORT", "8088")))
+    d.set_defaults(fn=cmd_debug)
+    # --json 위치 자유화(서브커맨드 뒤에 와도 인식)
+    argv = sys.argv[1:]; js = "--json" in argv
+    a = ap.parse_args([x for x in argv if x != "--json"]); a.json = js
+    try: a.fn(a)
+    except SystemExit: raise
+    except FileNotFoundError as e: fail(a, "파일 없음: %s" % e.filename)
+    except core.InputError as e: fail(a, "입력 오류: %s" % e)
+    except core.ModelError as e: fail(a, "모델/연산 오류: %s" % e)
+    except Exception as e: fail(a, "%s: %s" % (type(e).__name__, e))
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- hanword LaunchDaemon. Runs as the hidden system user _hanword (created by postinstall),
+     local mode on 127.0.0.1:8088 (this Mac only). Documents: /Library/Application Support/hanword/documents.
+     To change the port, edit the port below and run:
+       sudo launchctl bootout system/com.hanword.server; sudo launchctl bootstrap system /Library/LaunchDaemons/com.hanword.server.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hanword.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/hanword/hanword</string>
+        <string>serve</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8088</string>
+        <string>--data</string>
+        <string>/Library/Application Support/hanword/documents</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Library/Application Support/hanword</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+        <key>PYTHONIOENCODING</key>
+        <string>utf-8</string>
+    </dict>
+    <key>UserName</key>
+    <string>_hanword</string>
+    <key>GroupName</key>
+    <string>_hanword</string>
+    <key>WorkingDirectory</key>
+    <string>/Library/Application Support/hanword</string>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/hanword/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/hanword/server.log</string>
+</dict>
+</plist>

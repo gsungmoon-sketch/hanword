@@ -1,0 +1,238 @@
+name: release
+# Tag push v* -> tests -> self-contained packages per OS (PyInstaller one-file) -> real install/
+# use/uninstall smoke test of each package on a fresh runner -> .pyz -> GitHub Release + SHA256SUMS.
+# workflow_dispatch builds and smoke-tests everything but does not publish a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  PYINSTALLER_VERSION: "6.22.3"
+  WINSW_VERSION: "v2.12.0"
+  WINSW_SHA256: "b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f"          # WinSW.NET461.exe
+  WINSW_LICENSE_SHA256: "1cdf703c10a70e5973bf3acf2a5eeabe7746237155b92db2034aeae26fdf7802"  # LICENSE.txt @ tag
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        shell: bash
+        run: |
+          SRC=$(python3 -c "import re;print(re.search(r'__version__\s*=\s*[\"\x27]([^\"\x27]+)', open('hanword_version.py', encoding='utf-8').read()).group(1))")
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+            if ! [[ "$VER" =~ ^[0-9A-Za-z.+-]+$ ]]; then echo "::error::bad tag $GITHUB_REF_NAME"; exit 1; fi
+            if [[ "${VER%%-*}" != "$SRC" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match hanword_version.__version__ $SRC"; exit 1
+            fi
+          else
+            VER="$SRC"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "version $VER"
+
+  build:
+    name: build + smoke (${{ matrix.name }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest, kind: windows }
+          - { name: macos-arm64, os: macos-14, kind: macos }
+          - { name: macos-x64, os: macos-15-intel, kind: macos }
+          - { name: linux-x64, os: ubuntu-22.04, kind: linux }   # oldest supported glibc (2.35)
+    runs-on: ${{ matrix.os }}
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: tests
+        working-directory: tests
+        run: python -m unittest discover -v -p "test_*.py"
+
+      - name: install PyInstaller (build time only)
+        run: python -m pip install "pyinstaller==${{ env.PYINSTALLER_VERSION }}"
+
+      - name: build binary
+        if: matrix.kind != 'linux'
+        run: python packaging/build.py --version "${{ env.VER }}" --strict
+      - name: build binary + tarball
+        if: matrix.kind == 'linux'
+        run: python packaging/build.py --version "${{ env.VER }}" --strict --tarball
+
+      - name: smoke test (bare binary)
+        shell: bash
+        run: |
+          EXE=dist/hanword/hanword; [[ "${{ matrix.kind }}" == windows ]] && EXE=dist/hanword/hanword.exe
+          python packaging/smoke_test.py binary "$EXE"
+
+      # ---------------- Windows: WinSW + Inno Setup ----------------
+      - name: fetch WinSW (pinned, sha256-verified)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          $d = "build\winsw"; New-Item -ItemType Directory -Force $d | Out-Null
+          $base = "https://github.com/winsw/winsw/releases/download/$env:WINSW_VERSION"
+          Invoke-WebRequest "$base/WinSW.NET461.exe" -OutFile "$d\WinSW.NET461.exe"
+          Invoke-WebRequest "https://raw.githubusercontent.com/winsw/winsw/$env:WINSW_VERSION/LICENSE.txt" -OutFile "$d\LICENSE.txt"
+          foreach ($p in @(@("$d\WinSW.NET461.exe", $env:WINSW_SHA256), @("$d\LICENSE.txt", $env:WINSW_LICENSE_SHA256))) {
+            $h = (Get-FileHash $p[0] -Algorithm SHA256).Hash.ToLower()
+            if ($h -ne $p[1]) { throw "sha256 mismatch for $($p[0]): $h" }
+          }
+      - name: build installer (Inno Setup)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
+          }
+          & $iscc "/DAppVersion=$env:VER" packaging\windows\hanword.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      # ---------------- macOS: pkgbuild/productbuild ----------------
+      - name: build .pkg
+        if: matrix.kind == 'macos'
+        run: packaging/macos/build_pkg.sh "$VER" dist
+
+      - name: locate artifact
+        id: art
+        shell: bash
+        run: |
+          case "${{ matrix.kind }}" in
+            windows) F="dist/hanword-$VER-windows-x64-setup.exe" ;;
+            macos)   F=$(ls dist/hanword-"$VER"-macos-*.pkg) ;;
+            linux)   F="dist/hanword-$VER-linux-x64.tar.gz" ;;
+          esac
+          test -f "$F" && ls -l "$F"
+          echo "file=$F" >> "$GITHUB_OUTPUT"
+
+      - name: smoke test (install -> healthz -> save/load -> convert -> CLI -> uninstall)
+        run: python packaging/smoke_test.py ${{ matrix.kind }} "${{ steps.art.outputs.file }}"
+      - name: service logs on failure
+        if: failure() && matrix.kind != 'windows'
+        shell: bash
+        run: |
+          if [[ "${{ matrix.kind }}" == linux ]]; then
+            sudo journalctl -u hanword --no-pager | tail -100 || true
+          else
+            sudo tail -100 /Library/Logs/hanword/server.log || true
+          fi
+      - name: service logs on failure (Windows)
+        if: failure() && matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem "$env:ProgramData\hanword\logs" -Filter *.log -ErrorAction SilentlyContinue |
+            ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Tail 100 }
+          Get-Content "$env:TEMP\hanword-install.log" -Tail 100 -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.name }}
+          path: ${{ steps.art.outputs.file }}
+          if-no-files-found: error
+          retention-days: 7
+
+  pyz:
+    name: zipapp (.pyz)
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"          # oldest supported Python
+      - name: build
+        run: python scripts/build_zipapp.py --version "${{ needs.version.outputs.version }}" --out dist
+      - name: smoke test (.pyz on Python 3.10)
+        shell: bash
+        run: python packaging/smoke_test.py pyz "dist/hanword-${{ needs.version.outputs.version }}.pyz"
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-22.04'
+        with:
+          name: pkg-pyz
+          path: dist/*.pyz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub Release
+    needs: [version, build, pyz]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: assets
+          merge-multiple: true
+      - name: checksums
+        working-directory: assets
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: release notes
+        shell: bash
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          cat > notes.md <<EOF
+          ## hanword ${V}
+
+          ### 다운로드 (Python 설치 불필요)
+          | 운영체제 | 파일 | 설치 |
+          |---|---|---|
+          | Windows 10/11 (x64) | \`hanword-${V}-windows-x64-setup.exe\` | 실행 → 마침 후 브라우저에서 http://127.0.0.1:8088/ |
+          | macOS (Apple Silicon) | \`hanword-${V}-macos-arm64.pkg\` | 서명 전 패키지: Finder에서 **우클릭 → 열기** (또는 설정 → 개인정보 보호 및 보안 → 그래도 열기) |
+          | macOS (Intel) | \`hanword-${V}-macos-x64.pkg\` | 위와 같음 |
+          | Linux (x64, glibc 2.35+, systemd) | \`hanword-${V}-linux-x64.tar.gz\` | 압축 해제 후 \`sudo ./install.sh\` |
+          | Python 3.10+ 가 있는 모든 OS | \`hanword-${V}.pyz\` | \`python3 hanword-${V}.pyz serve\` |
+
+          설치형은 백그라운드 서비스로 실행되며 **이 컴퓨터에서만** http://127.0.0.1:8088/ 로 접속됩니다.
+          명령줄 변환: \`hanword convert 입력.docx 출력.hwpx\` (\`hanword --help\`).
+          파일 무결성: \`SHA256SUMS\` 와 비교하세요 (\`sha256sum -c SHA256SUMS\`, Windows: \`Get-FileHash\`).
+
+          ---
+
+          ### Downloads (no Python required)
+          Windows installer (\`.exe\`, installs a Windows service), macOS \`.pkg\` (arm64 / x64, LaunchDaemon;
+          unsigned - right-click → Open, or System Settings → Privacy & Security → Open Anyway), Linux tarball
+          (\`sudo ./install.sh\`, systemd service), and a \`.pyz\` for any OS with Python 3.10+.
+          After installing, open http://127.0.0.1:8088/ on the same machine (local mode has no login and
+          listens on 127.0.0.1 only). Verify downloads against \`SHA256SUMS\`.
+          EOF
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          PRE=""; [[ "$TAG" == *-* ]] && PRE="--prerelease"
+          gh release create "$TAG" assets/* --verify-tag --title "hanword ${TAG#v}" --notes-file notes.md $PRE

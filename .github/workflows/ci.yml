@@ -1,0 +1,29 @@
+name: tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: CLI sanity
+        run: python hanword --json formats
+      - name: unit + server + corpus tests
+        working-directory: tests
+        run: python -m unittest discover -v -p "test_*.py"
+      - name: packaging entry point (no build)
+        run: |
+          python packaging/entry.py --version
+          python packaging/entry.py --json formats

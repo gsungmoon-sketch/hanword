@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>hanword User Manual</title><link rel="stylesheet" href="../manual.css"></head><body>
+<nav class="top"><div class="in"><a href="#top"><b>Contents</b></a><a href="../index.html">Language</a><span class="sp"></span><a href="../ko/index.html">한국어</a></div></nav>
+<div class="wrap" id="top"><h1>hanword User Manual</h1>
+<p>Version 0.1.0. How to install, use and run hanword, a web word processor for Korean documents that opens and saves HWPX, DOCX, HTML and text. If you are new, read chapters 1 to 4 in order. Every chapter prints cleanly (save as PDF).</p>
+<ol class="toc">
+<li><a href="#overview">Overview</a></li><li><a href="#install">Installation</a></li><li><a href="#firstrun">First run</a></li><li><a href="#editor">Using the editor</a></li><li><a href="#formats">File formats and limits</a></li><li><a href="#backup">Document storage and backup</a></li><li><a href="#trouble">Troubleshooting</a></li><li><a href="#security">Security</a></li><li><a href="#cli">CLI reference</a></li><li><a href="#config">Configuration reference</a></li><li><a href="#licence">Licences and third-party</a></li></ol>
+
+<h2 id="overview">1. Overview</h2>
+<p><b>hanword</b> is a browser-based word processor for Korean. A document is a single self-contained standard HTML file (images are embedded as data URIs), and editing and shortcuts follow Hangul (HWP) conventions. It opens and saves HWPX, DOCX, HTML and plain text, and a command-line tool (<code>hanword</code>) built on the same core converts and checks files without a browser.</p>
+<ul><li>The core needs <b>only the Python 3.10+ standard library</b>. No extra packages are required.</li>
+<li>By default it runs in <b>local mode</b>, reachable only from your own machine (127.0.0.1). A stateless <b>public converter mode</b> (<code>WP_PUBLIC=1</code>) exists for hosting on the internet.</li>
+<li>Repository: <code>github.com/gsungmoon-sketch/hanword</code> · Licence: MIT.</li></ul>
+<table><tr><th>Mode</th><th>Where documents live</th><th>Use</th></tr>
+<tr><td>Local (default)</td><td>Documents folder on the server machine</td><td>Your own PC or a small trusted LAN</td></tr>
+<tr><td>Public converter (<code>WP_PUBLIC=1</code>)</td><td>Nowhere (browser upload/download only)</td><td>Internet, behind an HTTPS reverse proxy</td></tr></table>
+
+<h2 id="install">2. Installation</h2>
+<h3>2.1 Downloading and verifying SHA256</h3>
+<p>Pick the file for your system from the GitHub release.</p>
+<table><tr><th>File</th><th>For</th></tr>
+<tr><td><code>hanword-&lt;ver&gt;-windows-x64-setup.exe</code></td><td>Windows 64-bit installer</td></tr>
+<tr><td><code>hanword-&lt;ver&gt;-macos-arm64.pkg</code></td><td>macOS (Apple silicon)</td></tr>
+<tr><td><code>hanword-&lt;ver&gt;-macos-x64.pkg</code></td><td>macOS (Intel)</td></tr>
+<tr><td><code>hanword-&lt;ver&gt;-linux-x64.tar.gz</code></td><td>Linux x86-64 (systemd)</td></tr>
+<tr><td><code>hanword-&lt;ver&gt;.pyz</code></td><td>Any OS (needs Python 3.10+)</td></tr>
+<tr><td><code>SHA256SUMS</code></td><td>Checksums of the files above</td></tr></table>
+<p>Verify that the download is intact.</p>
+<pre><code># Linux (file and SHA256SUMS in the same folder)
+sha256sum -c SHA256SUMS --ignore-missing
+# macOS
+shasum -a 256 hanword-0.1.0-macos-arm64.pkg
+# Windows (PowerShell or Command Prompt)
+Get-FileHash .\hanword-0.1.0-windows-x64-setup.exe -Algorithm SHA256
+certutil -hashfile hanword-0.1.0-windows-x64-setup.exe SHA256</code></pre>
+<p>The printed value must equal the matching line in <code>SHA256SUMS</code>.</p>
+
+<h3>2.2 Windows</h3>
+<ol><li>Run <code>setup.exe</code> (administrator rights required).</li>
+<li>The binary is unsigned, so SmartScreen may block it: click <b>More info → Run anyway</b>.</li>
+<li>Installed to <code>C:\Program Files\hanword\</code>. A Windows service named <code>hanword</code> (WinSW) is registered and starts automatically on <code>127.0.0.1:8088</code>.</li>
+<li>Documents are stored in <code>%ProgramData%\hanword\documents</code>.</li>
+<li>Choose <b>hanword 열기</b> (open hanword) in the Start menu to open the browser.</li>
+<li>Uninstall from Settings → Apps. Your data is kept unless you choose to remove it (silent uninstall: <code>/PURGEDATA</code> also deletes data).</li></ol>
+<h3>2.3 macOS</h3>
+<ol><li>Open the pkg. It may be unsigned or not notarised; if blocked, right-click the pkg and choose <b>Open</b>, or allow it in <b>System Settings › Privacy &amp; Security</b>.</li>
+<li>Installs <code>/usr/local/hanword</code>, the command <code>/usr/local/bin/hanword</code> and the LaunchDaemon <code>com.hanword.server</code> (starts automatically).</li>
+<li>Data: <code>/Library/Application Support/hanword</code> · Logs: <code>/Library/Logs/hanword</code>.</li>
+<li>Uninstall: <code>sudo /usr/local/hanword/uninstall.sh [--purge]</code> (<code>--purge</code> also deletes data).</li></ol>
+<h3>2.4 Linux (systemd)</h3>
+<pre><code>tar xzf hanword-0.1.0-linux-x64.tar.gz
+cd hanword-0.1.0-linux-x64
+sudo ./install.sh [--port N]</code></pre>
+<ul><li>Installs to <code>/opt/hanword</code>, command <code>/usr/local/bin/hanword</code>, data <code>/var/lib/hanword</code> (user <code>hanword</code>), unit <code>hanword.service</code>.</li>
+<li>Status: <code>systemctl status hanword</code> · Logs: <code>journalctl -u hanword</code></li>
+<li>Uninstall: <code>sudo /opt/hanword/uninstall.sh [--purge]</code></li></ul>
+<h3>2.5 Any OS: .pyz or source</h3>
+<pre><code># single file (.pyz)
+python hanword-0.1.0.pyz serve
+
+# from a source checkout
+git clone https://github.com/gsungmoon-sketch/hanword
+cd hanword
+python server.py --host 127.0.0.1 --port 8088 --data ~/hanword-documents
+python hanword convert in.docx out.hwpx   # CLI</code></pre>
+<p>Packaged installs provide one command, <code>hanword</code>: <code>hanword serve [--host] [--port] [--data]</code>, <code>hanword --version</code>, plus every CLI subcommand. From source, the server is <code>server.py</code> and the CLI is the <code>hanword</code> script.</p>
+<h3>2.6 Optional components (not bundled)</h3>
+<p>Core features work without them. Install them yourself if needed.</p>
+<table><tr><th>Component</th><th>Purpose</th><th>Install</th></tr>
+<tr><td>pyhwp (AGPL-3.0)</td><td>Open .hwp (HWP5)</td><td><code>pip install pyhwp</code>. If not on PATH, set <code>WP_HWP5_BIN</code> to its bin folder</td></tr>
+<tr><td>python-hwpx + lxml</td><td>Alternative HWPX engine</td><td><code>pip install python-hwpx lxml</code>, <code>WP_HWPX_ENGINE=pyhwpx</code></td></tr>
+<tr><td>cryptography</td><td>Password-protected edit history</td><td><code>pip install cryptography</code></td></tr>
+<tr><td>poppler-utils</td><td>PDF import (<code>pdftotext</code>, <code>pdftoppm</code>)</td><td>OS package manager</td></tr>
+<tr><td>ImageMagick</td><td>Server-side raster PDF assembly</td><td>OS package manager</td></tr>
+<tr><td>node + playwright</td><td>Vector PDF (selectable text)</td><td><code>WP_PDF_LOCAL=1 WP_HTMLPDF=path/htmlpdf.js WP_NODE_PATH=…</code></td></tr></table>
+<p>In-browser printing and “Save as PDF” work without any of these (the browser print dialog, plus a client-side raster PDF built with the bundled html2canvas and jsPDF).</p>
+
+<h2 id="firstrun">3. First run</h2>
+<ol><li>Packaged installs: the service is already running. Open <code>http://127.0.0.1:8088/</code> in a browser (on Windows use the Start menu entry). From source or .pyz, start the server first.</li>
+<li>A blank document appears; just type. The top has the menus (파일 File, 편집 Edit, 보기 View, 입력 Insert, 서식 Format, 쪽 Page, 도구 Tools) and a toolbar.</li>
+<li>Press <kbd>Alt</kbd>+<kbd>S</kbd> to save; the document is stored as <code>name.html</code> in the documents folder.</li>
+<li>For other formats use the File menu: “Save as Hangul document (HWPX)”, “Save PDF”, and so on.</li></ol>
+<div class="note"><b>Note</b>Use <code>127.0.0.1</code> or <code>localhost</code> in the address bar. Any other host name gives a 421 error (see chapter 7). If the port is taken, change it with <code>--port</code>.</div>
+
+<h2 id="editor">4. Using the editor</h2>
+<p>The UI is in Korean; menu names are given below with an English gloss. Menus shown are for local mode. In public converter mode the File menu offers “Open from my PC (upload)” and “Download as …” (HTML, HWPX, DOCX, TXT, PDF), and nothing is stored on the server. Shortcuts follow Hangul conventions.</p>
+<h3>4.1 Menus and shortcuts</h3>
+<table><tr><th>Menu</th><th>Items (shortcut)</th></tr>
+<tr><td>파일 File</td><td>New (<kbd>Alt+N</kbd>), Open (<kbd>Alt+O</kbd>), Save (<kbd>Alt+S</kbd> / <kbd>Ctrl+S</kbd>), Save as (<kbd>Alt+V</kbd>), Save as HWPX, Open HWPX/HWP, Save PDF (<kbd>Alt+P</kbd> / <kbd>Ctrl+P</kbd>), Print now (browser), Quit (<kbd>Alt+X</kbd>)</td></tr>
+<tr><td>편집 Edit</td><td>Undo (<kbd>Ctrl+Z</kbd>), Redo (<kbd>Ctrl+Shift+Z</kbd>), Cut/Copy/Paste (<kbd>Ctrl+X</kbd>/<kbd>C</kbd>/<kbd>V</kbd>), Select all (<kbd>Ctrl+A</kbd>), Find (<kbd>Ctrl+F</kbd> / <kbd>F2</kbd>), Replace (<kbd>Ctrl+H</kbd>), Find next (<kbd>Ctrl+L</kbd>)</td></tr>
+<tr><td>보기 View</td><td>Whole-page view, Full screen, Page outline, Page guides</td></tr>
+<tr><td>입력 Insert</td><td>Table (<kbd>Ctrl+N,T</kbd>), Picture (<kbd>Ctrl+N,I</kbd>), Media (video/audio), Special characters (<kbd>Ctrl+F10</kbd>), Caption, Renumber captions, Hyperlink (<kbd>Ctrl+K</kbd>), Horizontal rule, Page break (<kbd>Ctrl+Enter</kbd>), List properties</td></tr>
+<tr><td>서식 Format</td><td>Character format (<kbd>Alt+L</kbd>), Paragraph format (<kbd>Alt+T</kbd>), Paragraph defaults (<kbd>Alt+Shift+C</kbd>), Styles (<kbd>F6</kbd>), Bold/Italic/Underline (<kbd>Ctrl+B</kbd>/<kbd>I</kbd>/<kbd>U</kbd>), Strikethrough, Larger/Smaller (<kbd>Alt+Shift+E</kbd>/<kbd>R</kbd>), Align left/center/right/justify (<kbd>Ctrl+Shift+L</kbd>/<kbd>C</kbd>/<kbd>R</kbd>/<kbd>M</kbd>)</td></tr>
+<tr><td>쪽 Page</td><td>Page setup (<kbd>F7</kbd>), Page break, Header/Footer (<kbd>Ctrl+N,H</kbd>), Page numbers (<kbd>Ctrl+N,P</kbd>), Generate table of contents, Insert endnote, Renumber endnotes</td></tr>
+<tr><td>도구 Tools</td><td>Spell check (<kbd>F8</kbd>), Word count, Set/change edit-history password, Bug report / board (when the board is enabled)</td></tr></table>
+<p>Keys written with a comma, such as <kbd>Ctrl+N,T</kbd>, are two-step: press <kbd>Ctrl+N</kbd>, release, then press <kbd>T</kbd>. Menus may differ slightly between versions.</p>
+<h3>4.2 Characters and paragraphs</h3>
+<p>Set character formatting from the toolbar or the character dialog (<kbd>Alt+L</kbd>): font, size, text colour, shading colour, bold, italic, underline, strikethrough, superscript (<kbd>Alt+Shift+P</kbd>) and subscript (<kbd>Alt+Shift+S</kbd>). The paragraph dialog (<kbd>Alt+T</kbd>) sets alignment and indentation. Headings (h1 to h3) and lists (bullet or numbered, up to 9 levels) are set with Styles (<kbd>F6</kbd>) and List properties.</p>
+<h3>4.3 Tables</h3>
+<p>Create a table from the Insert menu. Inside a cell press <kbd>F5</kbd> to start a cell block, extend it with the arrow keys, then merge, split, or change borders and background in one step.</p>
+<table><tr><th>Action</th><th>Keys</th></tr><tr><td>Cell block</td><td><kbd>F5</kbd> then arrows</td></tr><tr><td>Merge / split</td><td>with a block: <kbd>M</kbd> / <kbd>S</kbd></td></tr><tr><td>Borders / background</td><td>with a block: <kbd>L</kbd> / <kbd>C</kbd></td></tr></table>
+<p>A table can be placed as inline (like a character), paragraph (wrap), or fixed. Wrap switches left/right automatically as you drag and text flows around the table. A table can also be split vertically (표−) or joined (표+).</p>
+<h3>4.4 Pictures and shapes</h3>
+<ul><li><b>Pictures</b> (Insert → Picture): each is one object block. Resize width and height independently with the corner and edge handles, crop any of the four sides, rotate or flip, wrap text around it, and add a caption (number plus description). Pictures are embedded in the document.</li>
+<li><b>Shapes</b>: open the shape menu (도형▾) in the toolbar and pick rectangle, ellipse or line. Drag the two end handles of a line to make horizontal, vertical or diagonal lines (angles snap). Change fill, line colour, thickness and solid/dashed/dotted; group, align and distribute objects; set stacking order (front/back).</li></ul>
+<h3>4.5 Media and page background</h3>
+<ul><li>Insert → Media (video/audio) puts a playable video in the document. Click the video to play or pause; the control bar sets position and volume. In public converter mode the chosen file is kept only inside your browser. In local mode, insertable media lives in the <code>media/</code> folder of the documents folder.</li>
+<li>Page background colour: choose a swatch in Page setup to colour every page.</li>
+<li>Using a picture as the page background is still planned (the menu item is marked “계획중”, in planning).</li></ul>
+<h3>4.6 Page setup, headers/footers, table of contents, endnotes</h3>
+<ul><li><b>Page setup</b> (<kbd>F7</kbd>): paper size, orientation, margins, background colour.</li>
+<li><b>Header/Footer</b> and <b>Page numbers</b>: Page menu. <b>Page break</b>: <kbd>Ctrl+Enter</kbd>.</li>
+<li><b>Generate table of contents</b>: Page menu. Builds a contents list at the very start of page 1 based on current page numbers. Afterwards it is ordinary text you can edit; regenerate it after the content changes (it does not update by itself).</li>
+<li><b>Endnotes and caption numbers</b> renumber automatically when you add or delete them. Use “Renumber endnotes” or “Renumber captions” if needed.</li></ul>
+<h3>4.7 Find/replace, spell check, word count</h3>
+<p><kbd>Ctrl+F</kbd> (<kbd>F2</kbd>) find, <kbd>Ctrl+L</kbd> find next, <kbd>Ctrl+H</kbd> replace. <kbd>F8</kbd> spell check; Tools → Word count.</p>
+<h3>4.8 Undo and edit history</h3>
+<p>Undo is lossless: after undoing and editing again the earlier branch is not lost, and repeated undo walks back through discarded branches too. With <b>Tools → Set/change edit-history password</b> the history is encrypted and stored with the document when you save (requires <code>cryptography</code>; off by default). Enter the password when reopening to keep undoing across sessions. The password is stored nowhere; if lost, only the history is unrecoverable (the document text is unaffected).</p>
+<h3>4.9 Printing and PDF</h3>
+<ul><li><b>Save PDF</b> (<kbd>Alt+P</kbd>) and <b>Print now (browser)</b> use the browser print dialog, or build a raster PDF inside the browser. No extra components needed.</li>
+<li>Vector PDF (selectable, searchable text) needs the server-side node + playwright setup (section 2.6).</li>
+<li>Printing directly to a printer through a dedicated device is not part of this public edition. Use browser printing.</li></ul>
+<h3>4.10 Saving and opening other formats</h3>
+<ul><li><b>Save as TXT</b>: tables are drawn with box characters so they keep their shape in Notepad or a terminal; headings are underlined, lists use bullets, and pictures/videos/shapes appear as [그림]/[영상]/[도형]. Page breaks remain as form-feed characters and are restored when the TXT is reopened.</li>
+<li><b>Open TXT</b>: UTF-8 or CP949 is detected automatically; text becomes paragraphs.</li>
+<li><b>Open PDF</b>: “as is” (pages rendered as pictures: not editable, layout preserved) or “text only” (text extracted into paragraphs: editable, layout lost). A scanned PDF with no text is refused in “text only”; use “as is”.</li></ul>
+
+<h2 id="formats">5. File formats and limits</h2>
+<table><tr><th>Format</th><th>Open</th><th>Save</th><th>Notes</th></tr>
+<tr><td>HTML (.html)</td><td>yes</td><td>yes</td><td>Native format, images embedded</td></tr>
+<tr><td>HWPX (.hwpx)</td><td>yes</td><td>yes</td><td>OWPML (KS X 6101), handled with the standard library</td></tr>
+<tr><td>DOCX (.docx)</td><td>yes</td><td>yes</td><td></td></tr>
+<tr><td>TXT (.txt)</td><td>yes</td><td>yes</td><td>UTF-8/CP949 detection</td></tr>
+<tr><td>HWP (.hwp, HWP5)</td><td>yes (needs pyhwp)</td><td>no</td><td>HWP 3.x unsupported</td></tr>
+<tr><td>DOC (.doc)</td><td>text only</td><td>no</td><td>No formatting</td></tr>
+<tr><td>PDF (.pdf)</td><td>text or page images</td><td>yes</td><td>poppler-utils needed for import</td></tr></table>
+<h3>Known limits</h3>
+<ul><li>Complex HWPX objects (such as charts), tracked changes and macros are not supported.</li><li>.doc gives text only; .hwp needs pyhwp; HWP 3.x cannot be opened.</li><li>PDF import yields either text or page images.</li></ul>
+<h3>Size and concurrency limits</h3>
+<ul><li>CLI input: at most 200 MB. Server POST body: at most 64 MB.</li><li>PDF rasterising: at most 300 pages.</li><li>Concurrent conversions: <code>WP_CONV_MAX</code> (default 2); beyond that the server answers HTTP 503 (retry shortly).</li></ul>
+<h3>Round-trip check</h3>
+<p>To see whether converting through another format loses content, run <code>hanword roundtrip FILE --via hwpx|docx|html</code> (exit code 1 on loss).</p>
+
+<h2 id="backup">6. Document storage and backup</h2>
+<p>Layout of the documents folder (<code>WP_DOCS</code>) in local mode:</p>
+<table><tr><th>Path</th><th>Contents</th></tr>
+<tr><td><code>name.html</code></td><td>The document itself (self-contained HTML, images as data URIs)</td></tr>
+<tr><td><code>images/</code></td><td>Image files</td></tr><tr><td><code>media/</code></td><td>Insertable media</td></tr>
+<tr><td><code>.hist/</code></td><td>Encrypted edit history (needs <code>cryptography</code>)</td></tr><tr><td><code>print/</code></td><td>Temporary print files</td></tr>
+<tr><td><code>board.jsonl</code></td><td>Feedback board posts, if enabled</td></tr></table>
+<table><tr><th>OS</th><th>Default documents folder</th></tr><tr><td>Windows</td><td><code>%ProgramData%\hanword\documents</code></td></tr><tr><td>macOS</td><td><code>/Library/Application Support/hanword</code></td></tr><tr><td>Linux (packaged)</td><td><code>/var/lib/hanword</code></td></tr><tr><td>Run by hand</td><td><code>~/hanword-documents</code></td></tr></table>
+<p><b>Backup</b>: copy the whole folder (stop the service, or copy while nobody is editing). <b>Restore</b>: stop the service, copy the contents back, start it again. For long-term archives also export important documents to HWPX or HTML.</p>
+
+<h2 id="trouble">7. Troubleshooting</h2>
+<table><tr><th>Symptom</th><th>Cause and fix</th></tr>
+<tr><td>Fails to start: port already in use</td><td>Choose another port with <code>--port</code> (or <code>WP_PORT</code>).</td></tr>
+<tr><td>421 Misdirected on connect</td><td>The Host header check (DNS-rebinding protection). Browse via <code>127.0.0.1</code> or <code>localhost</code>, or add the name you use on your LAN to <code>WP_ALLOWED_HOSTS</code>.</td></tr>
+<tr><td>“refusing to listen” and exit</td><td>Bind policy. Non-loopback addresses are allowed only with <code>WP_PUBLIC=1</code> or <code>WP_ALLOW_REMOTE=1</code> (chapter 8).</td></tr>
+<tr><td>503 busy</td><td>Concurrent conversion limit reached. Retry shortly or raise <code>WP_CONV_MAX</code>.</td></tr>
+<tr><td>Fonts look different</td><td>The font is missing and a bundled one is substituted. Hamchorom and UnBatang are not bundled (chapter 10, Fonts).</td></tr>
+<tr><td>.hwp will not open</td><td><code>pip install pyhwp</code>; set <code>WP_HWP5_BIN</code> if needed.</td></tr>
+<tr><td>Edit-history password error</td><td>Wrong password or <code>cryptography</code> missing. Passwords cannot be recovered.</td></tr>
+<tr><td>PDF will not open</td><td>Check that poppler-utils (<code>pdftotext</code>, <code>pdftoppm</code>) is installed.</td></tr>
+<tr><td>Windows SmartScreen / macOS Gatekeeper</td><td>The installers are unsigned. See 2.2 and 2.3.</td></tr>
+<tr><td>Setting change has no effect</td><td>Restart the service (chapter 10, service settings).</td></tr></table>
+<p>Logs: Linux <code>journalctl -u hanword</code> · macOS <code>/Library/Logs/hanword</code> · Windows: the WinSW logs in <code>C:\Program Files\hanword\</code> · by hand: the terminal output.</p>
+
+<h2 id="security">8. Security</h2>
+<div class="warn"><b>Local mode has no login</b>Anyone who can reach the port can read, write and delete documents. Therefore it binds to 127.0.0.1 by default, and any other address is refused unless <code>WP_PUBLIC=1</code> or <code>WP_ALLOW_REMOTE=1</code> is set. Use <code>WP_ALLOW_REMOTE=1</code> only on a trusted LAN.</div>
+<ul><li>Host header check against DNS rebinding (421 on mismatch); cross-origin POST blocked (403).</li>
+<li>CSP with a per-request nonce, X-Frame-Options DENY, nosniff, no-referrer.</li>
+<li>Upload size limits; zip-bomb and XXE-safe parsing of HWPX/DOCX (expat, entity checks); link-scheme whitelist.</li>
+<li><code>WP_DEBUG=1</code> opens a local debug bridge. Never enable it on a shared machine.</li></ul>
+<h3>Exposing it to the internet</h3>
+<p>Run with <code>WP_PUBLIC=1</code> (stateless converter mode), put it behind an HTTPS reverse proxy, and set <code>WP_PUBLIC_HOST</code> to your domain. Never expose local mode directly.</p>
+<pre><code># hanword in public mode on 127.0.0.1
+WP_PUBLIC=1 WP_PUBLIC_HOST=docs.example.com WP_SITE_URL=https://docs.example.com hanword serve --port 8088
+
+# Caddy
+docs.example.com {
+    reverse_proxy 127.0.0.1:8088
+}
+
+# nginx (inside a server block; TLS certificates configured separately)
+location / {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_set_header Host $host;
+    client_max_body_size 64m;
+}</code></pre>
+<p>Report vulnerabilities through GitHub Security Advisories (see <code>SECURITY.md</code> in the repository).</p>
+
+<h2 id="cli">9. CLI reference</h2>
+<p>The CLI uses the same core without a browser. Run <code>hanword</code> when installed, or <code>python hanword</code> from source. The global option <code>--json</code> prints machine-readable JSON. A <code>-</code> in place of a file means stdin/stdout. Input is limited to 200 MB.</p>
+<table><tr><th>Command</th><th>Description</th></tr>
+<tr><td><code>formats</code></td><td>List readable and writable formats</td></tr>
+<tr><td><code>convert IN OUT [--from F] [--to F] [--paper A4] [--orient portrait|landscape] [--pdf-mode text|image]</code></td><td>Convert formats. Formats are inferred from extensions; override with <code>--from/--to</code></td></tr>
+<tr><td><code>info FILE</code></td><td>Document summary</td></tr>
+<tr><td><code>check FILE</code></td><td>Parse and validate; exit code 1 if there are errors</td></tr>
+<tr><td><code>roundtrip FILE [--via hwpx|docx|html]</code></td><td>Convert there and back and check for loss; 1 on loss</td></tr>
+<tr><td><code>model FILE|-</code></td><td>Dump the document model as JSON (one line with <code>--json</code>)</td></tr>
+<tr><td><code>render MODEL.json|- OUT|-</code></td><td>Model to editor HTML (or .docx/.hwpx/.txt/.pdf by OUT extension)</td></tr>
+<tr><td><code>apply MODEL|- OPS.json|- [-o OUT]</code></td><td>Apply edit operations, output a new model JSON. MODEL is a .json or a document</td></tr>
+<tr><td><code>debug state|log|snapshot|eval JS|cmd OP [--arg A] [--port 8088]</code></td><td>Local debug server only (<code>WP_DEBUG=1</code>); exit code 3 if disabled</td></tr>
+<tr><td><code>serve</code>, <code>--version</code></td><td>(packaged) run the server / print the version</td></tr></table>
+<h3>Exit codes</h3>
+<table><tr><th>Code</th><th>Meaning</th></tr><tr><td>0</td><td>Success</td></tr><tr><td>1</td><td>Defects found by check or roundtrip</td></tr><tr><td>2</td><td>Usage or input error</td></tr><tr><td>3</td><td>Debug disabled</td></tr></table>
+<h3>Examples</h3>
+<pre><code>hanword formats
+hanword convert report.docx report.hwpx
+hanword convert notes.txt notes.pdf --paper A4 --orient landscape
+hanword convert scan.pdf scan.html --pdf-mode image
+hanword info report.hwpx
+hanword --json check report.hwpx; echo $?
+hanword roundtrip report.docx --via hwpx
+hanword model report.docx &gt; report.model.json
+hanword render report.model.json out.html
+cat report.docx | hanword convert - out.hwpx --from docx</code></pre>
+<h3>apply: edit operations</h3>
+<p>A position is <code>[block index, character offset]</code> (0-based). Operations run in order; if any fails the whole call fails (naming the operation) and the input is untouched. Text inside locked blocks (tables, pictures, page breaks) cannot be edited.</p>
+<table><tr><th>op</th><th>Arguments</th></tr>
+<tr><td><code>insert_text</code></td><td><code>pos</code>, <code>text</code></td></tr>
+<tr><td><code>delete_range</code></td><td><code>start</code>, <code>end</code> (start &lt; end)</td></tr>
+<tr><td><code>set_style</code></td><td><code>start</code>, <code>end</code>, <code>attrs</code>: bold/italic/underline/strike (true), color/highlight (#RRGGBB), size (1-400), font, link. A value of null or false removes it</td></tr>
+<tr><td><code>set_block_type</code></td><td><code>index</code>, <code>type</code> (p/h1/h2/h3/li/div); optional <code>list</code> (bullet|number), <code>level</code> (li only), <code>align</code>, <code>indent</code></td></tr>
+<tr><td><code>split_paragraph</code></td><td><code>pos</code></td></tr><tr><td><code>merge_paragraph</code></td><td><code>index</code> (merges that block with the next)</td></tr>
+<tr><td><code>insert_pgbreak</code></td><td><code>pos</code></td></tr><tr><td><code>delete_block</code></td><td><code>index</code></td></tr><tr><td><code>insert_block</code></td><td><code>index</code>, <code>block</code></td></tr></table>
+<pre><code>[
+  {"op":"insert_text","pos":[0,0],"text":"Title: "},
+  {"op":"set_style","start":[0,0],"end":[0,5],"attrs":{"bold":true,"color":"#1f5fbf"}},
+  {"op":"set_block_type","index":0,"type":"h1"},
+  {"op":"split_paragraph","pos":[0,7]},
+  {"op":"insert_pgbreak","pos":[1,0]}
+]</code></pre>
+<pre><code>hanword apply report.docx ops.json -o edited.model.json
+hanword render edited.model.json edited.hwpx
+hanword model report.docx | hanword apply - ops.json | hanword render - out.html</code></pre>
+
+<h2 id="config">10. Configuration reference</h2>
+<p>Configure with environment variables. Command-line options (<code>--host --port --data</code>) win when both are given.</p>
+<table><tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>WP_HOST</code></td><td>127.0.0.1</td><td>Bind address</td></tr>
+<tr><td><code>WP_PORT</code></td><td>8088</td><td>Port</td></tr>
+<tr><td><code>WP_DOCS</code></td><td><code>~/hanword-documents</code> when run by hand</td><td>Documents folder</td></tr>
+<tr><td><code>WP_DEBUG</code></td><td>0</td><td>1 enables the local debug bridge used by <code>hanword debug</code> (never on a shared machine)</td></tr>
+<tr><td><code>WP_PUBLIC</code></td><td>off</td><td>1 = stateless public converter mode (browser upload/download only; no print, no quit)</td></tr>
+<tr><td><code>WP_PUBLIC_HOST</code></td><td></td><td>Extra allowed Origin hosts (comma list)</td></tr>
+<tr><td><code>WP_SITE_URL</code></td><td>none</td><td>Public site URL; used for the robots.txt Sitemap line, <code>/sitemap.xml</code> and canonical links</td></tr>
+<tr><td><code>WP_BOARD_ENABLE</code></td><td>off</td><td>1 = anonymous feedback board stored in <code>WP_DOCS/board.jsonl</code>; <code>WP_BOARD_ADMIN</code> = admin delete key</td></tr>
+<tr><td><code>WP_ALLOW_REMOTE</code></td><td>off</td><td>1 = allow non-loopback bind in local mode (no login! trusted LAN only)</td></tr>
+<tr><td><code>WP_ALLOWED_HOSTS</code></td><td></td><td>Extra Host header names accepted in local mode (for example a LAN host name)</td></tr>
+<tr><td><code>WP_CONV_MAX</code></td><td>2</td><td>Concurrent conversions</td></tr>
+<tr><td><code>WP_SOCK_TIMEOUT</code></td><td>60</td><td>Socket timeout in seconds</td></tr>
+<tr><td><code>WP_MAX_BODY</code></td><td>67108864</td><td>Maximum POST body size in bytes (64 MB)</td></tr>
+<tr><td><code>WP_HWPX_ENGINE</code></td><td></td><td><code>pyhwpx</code> selects the python-hwpx engine</td></tr>
+<tr><td><code>WP_HWP5_BIN</code></td><td></td><td>pyhwp bin folder</td></tr>
+<tr><td><code>WP_PDF_LOCAL</code> / <code>WP_HTMLPDF</code> / <code>WP_NODE_PATH</code></td><td></td><td>Vector PDF (node + playwright): <code>WP_PDF_LOCAL=1</code>, path to htmlpdf.js, node module path</td></tr>
+<tr><td><code>WP_FONTDIR</code></td><td>app/font</td><td>Extra web fonts folder</td></tr></table>
+<h3>Changing service settings</h3>
+<pre><code># Linux
+sudo systemctl edit hanword      # under [Service]: Environment=WP_CONV_MAX=4
+sudo systemctl restart hanword
+
+# macOS: edit EnvironmentVariables in the plist, then
+sudo launchctl bootout system /Library/LaunchDaemons/com.hanword.server.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.hanword.server.plist
+
+# Windows: edit &lt;env&gt; in C:\Program Files\hanword\hanword-service.xml, then
+sc stop hanword
+sc start hanword</code></pre>
+<h3>Fonts</h3>
+<p>Bundled fonts (SIL OFL 1.1, unmodified upstream files): NanumGothic, NanumMyeongjo (TTF), Noto Sans KR (OTF), Pretendard (woff2). <b>Noto Serif KR</b>, <b>D2Coding</b>, <b>Hamchorom Batang/Dotum</b> (Hancom) and <b>UnBatang</b> (GPL) are not bundled; without them the editor falls back to bundled fonts. To add them, download from the official sources (the Hancom Hamchorom download page; the Un fonts package, e.g. <code>fonts-unfonts-core</code>), convert to woff2, and place them in the font folder (<code>app/font</code> or <code>WP_FONTDIR</code>) with these names:</p>
+<pre><code>NotoSerifKR-400.woff2       NotoSerifKR-700.woff2
+D2Coding-400.woff2          D2Coding-700.woff2
+Hamchorom-Batang-400.woff2  Hamchorom-Batang-700.woff2
+Hamchorom-Dotum-400.woff2   Hamchorom-Dotum-700.woff2
+UnBatang-400.woff2          UnBatang-700.woff2
+
+pip install fonttools brotli
+fonttools ttLib.woff2 compress original.ttf</code></pre>
+
+<h2 id="licence">11. Licences and third-party</h2>
+<ul><li>hanword: MIT, Copyright (c) 2026 GSUNGMOON.</li>
+<li>Bundled fonts: SIL OFL 1.1 (NanumGothic, NanumMyeongjo, Noto Sans KR, Pretendard; sources and sha256 in licenses/README.md).</li>
+<li>Bundled JavaScript: html2canvas and jsPDF (see the repository NOTICE and file headers for their licences).</li>
+<li>Optional components are not bundled and keep their own licences. Note that <b>pyhwp is AGPL-3.0</b>; it is used only if you install it yourself.</li>
+<li>Hamchorom (Hancom) and UnBatang (GPL) are not included.</li></ul>
+<footer>hanword 0.1.0 manual · MIT licence · Screen names may differ slightly between versions.</footer></div></body></html>

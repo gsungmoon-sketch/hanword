@@ -1,0 +1,24 @@
+# Python 생성물
+__pycache__/
+*.py[cod]
+
+# OS/에디터 잡동사니
+.DS_Store
+*.swp
+*~
+
+# 런타임/임시
+*.log
+
+# 라이브 사용자 문서(서비스 데이터 — 저장소 제외)
+documents/
+
+# 라이브 문서 저장소 + 게시판 데이터(WP_DOCS=_docs, board.jsonl 등 — 서비스 데이터)
+_docs/
+board.jsonl
+tests/private/
+
+# build outputs
+build/
+dist/
+*.spec

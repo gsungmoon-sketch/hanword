@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>한워드(hanword) 설명서</title><link rel="stylesheet" href="../manual.css"></head><body>
+<nav class="top"><div class="in"><a href="#top"><b>목차</b></a><a href="../index.html">언어 선택</a><span class="sp"></span><a href="../en/index.html">English</a></div></nav>
+<div class="wrap" id="top"><h1>한워드(hanword) 설명서</h1>
+<p>버전 0.1.0 · 한글(HWPX)·워드(DOCX)·HTML·텍스트를 열고 저장하는 웹 워드프로세서의 설치, 사용, 운영 안내입니다. 처음이라면 1→2→3→4장 순서로 읽으세요. 모든 장은 인쇄(PDF 저장)할 수 있습니다.</p>
+<ol class="toc">
+<li><a href="#overview">소개</a></li><li><a href="#install">설치</a></li><li><a href="#firstrun">처음 실행</a></li><li><a href="#editor">편집기 사용법</a></li><li><a href="#formats">파일 형식과 한계</a></li><li><a href="#backup">문서 저장 위치와 백업</a></li><li><a href="#trouble">문제 해결</a></li><li><a href="#security">보안</a></li><li><a href="#cli">CLI 참고</a></li><li><a href="#config">설정 참고</a></li><li><a href="#licence">라이선스와 서드파티</a></li></ol>
+
+<h2 id="overview">1. 소개</h2>
+<p><b>한워드</b>는 브라우저에서 쓰는 한국어 워드프로세서입니다. 문서 자체가 하나의 완결된 표준 HTML이고(그림은 data URI로 내장), 편집 방식과 단축키는 아래한글(HWP)을 따릅니다. 한글(HWPX), 워드(DOCX), HTML, 텍스트(TXT) 형식으로 열고 저장할 수 있고, 같은 코어를 쓰는 명령줄 도구(<code>hanword</code>)로 브라우저 없이 변환·검사도 할 수 있습니다.</p>
+<ul><li>핵심은 <b>Python 3.10 이상 표준 라이브러리만</b>으로 동작합니다. 별도 패키지를 설치할 필요가 없습니다.</li>
+<li>기본은 내 컴퓨터에서만 접속되는 <b>로컬 모드</b>(127.0.0.1)입니다. 인터넷에 올리는 용도의 <b>공개 변환기 모드</b>(<code>WP_PUBLIC=1</code>)도 있습니다.</li>
+<li>저장소: <code>github.com/gsungmoon-sketch/hanword</code> · 라이선스 MIT.</li></ul>
+<table><tr><th>모드</th><th>문서가 저장되는 곳</th><th>용도</th></tr>
+<tr><td>로컬(기본)</td><td>서버 컴퓨터의 문서 폴더</td><td>내 PC 또는 믿을 수 있는 소규모 LAN</td></tr>
+<tr><td>공개 변환기(<code>WP_PUBLIC=1</code>)</td><td>저장 안 함(브라우저 올리기/내려받기만)</td><td>HTTPS 리버스 프록시 뒤에서 인터넷 공개</td></tr></table>
+
+<h2 id="install">2. 설치</h2>
+<h3>2.1 내려받기와 SHA256 확인</h3>
+<p>릴리스(GitHub Releases)의 파일 중 내 환경에 맞는 것을 받습니다.</p>
+<table><tr><th>파일</th><th>대상</th></tr>
+<tr><td><code>hanword-&lt;버전&gt;-windows-x64-setup.exe</code></td><td>Windows 64비트 설치 프로그램</td></tr>
+<tr><td><code>hanword-&lt;버전&gt;-macos-arm64.pkg</code></td><td>macOS (Apple 실리콘)</td></tr>
+<tr><td><code>hanword-&lt;버전&gt;-macos-x64.pkg</code></td><td>macOS (Intel)</td></tr>
+<tr><td><code>hanword-&lt;버전&gt;-linux-x64.tar.gz</code></td><td>Linux x86-64 (systemd)</td></tr>
+<tr><td><code>hanword-&lt;버전&gt;.pyz</code></td><td>어디서나(Python 3.10+ 필요)</td></tr>
+<tr><td><code>SHA256SUMS</code></td><td>위 파일들의 체크섬</td></tr></table>
+<p>받은 파일이 손상·변조되지 않았는지 확인하세요.</p>
+<pre><code># Linux (받은 파일과 SHA256SUMS를 같은 폴더에)
+sha256sum -c SHA256SUMS --ignore-missing
+# macOS
+shasum -a 256 hanword-0.1.0-macos-arm64.pkg
+# Windows (PowerShell 또는 명령 프롬프트)
+Get-FileHash .\hanword-0.1.0-windows-x64-setup.exe -Algorithm SHA256
+certutil -hashfile hanword-0.1.0-windows-x64-setup.exe SHA256</code></pre>
+<p>출력된 값이 <code>SHA256SUMS</code>의 해당 줄과 같아야 합니다.</p>
+
+<h3>2.2 Windows</h3>
+<ol><li><code>setup.exe</code>를 실행합니다(관리자 권한 필요).</li>
+<li>서명되지 않은 파일이라 SmartScreen이 막을 수 있습니다. <b>추가 정보 → 실행</b>을 누르세요.</li>
+<li>설치 위치는 <code>C:\Program Files\hanword\</code>, Windows 서비스 <code>hanword</code>(WinSW)가 등록되어 <code>127.0.0.1:8088</code>에서 자동 시작합니다.</li>
+<li>문서 폴더는 <code>%ProgramData%\hanword\documents</code>입니다.</li>
+<li>시작 메뉴의 <b>hanword 열기</b>를 누르면 브라우저가 열립니다.</li>
+<li>삭제: 설정 → 앱에서 제거합니다. 문서 데이터는 선택하지 않으면 남습니다(무인 설치 삭제 시 <code>/PURGEDATA</code>로 데이터까지 삭제).</li></ol>
+<h3>2.3 macOS</h3>
+<ol><li>pkg를 엽니다. 서명·공증이 없을 수 있으니 막히면 pkg를 <b>오른쪽 클릭 → 열기</b>, 또는 <b>시스템 설정 › 개인정보 보호 및 보안</b>에서 “그래도 열기”를 누릅니다.</li>
+<li>설치 위치: <code>/usr/local/hanword</code>, 명령 <code>/usr/local/bin/hanword</code>, LaunchDaemon <code>com.hanword.server</code>(자동 시작).</li>
+<li>데이터: <code>/Library/Application Support/hanword</code> · 로그: <code>/Library/Logs/hanword</code>.</li>
+<li>삭제: <code>sudo /usr/local/hanword/uninstall.sh [--purge]</code> (<code>--purge</code>=데이터까지 삭제)</li></ol>
+<h3>2.4 Linux (systemd)</h3>
+<pre><code>tar xzf hanword-0.1.0-linux-x64.tar.gz
+cd hanword-0.1.0-linux-x64
+sudo ./install.sh [--port N]</code></pre>
+<ul><li>설치 위치 <code>/opt/hanword</code>, 명령 <code>/usr/local/bin/hanword</code>, 데이터 <code>/var/lib/hanword</code>(사용자 <code>hanword</code>), 유닛 <code>hanword.service</code>.</li>
+<li>상태: <code>systemctl status hanword</code> · 로그: <code>journalctl -u hanword</code></li>
+<li>삭제: <code>sudo /opt/hanword/uninstall.sh [--purge]</code></li></ul>
+<h3>2.5 어느 OS에서나: .pyz 또는 소스</h3>
+<pre><code># 단일 파일(.pyz)
+python hanword-0.1.0.pyz serve
+
+# 소스 받아서 실행
+git clone https://github.com/gsungmoon-sketch/hanword
+cd hanword
+python server.py --host 127.0.0.1 --port 8088 --data ~/hanword-documents
+python hanword convert in.docx out.hwpx   # CLI</code></pre>
+<p>설치형(패키지)에서는 명령이 하나(<code>hanword</code>)입니다: <code>hanword serve [--host] [--port] [--data]</code>, <code>hanword --version</code>, 그리고 모든 CLI 하위 명령. 소스에서는 서버가 <code>server.py</code>, CLI가 <code>hanword</code> 스크립트입니다.</p>
+<h3>2.6 선택 구성요소(번들되지 않음)</h3>
+<p>없어도 핵심 기능은 동작합니다. 필요할 때 직접 설치하세요.</p>
+<table><tr><th>구성요소</th><th>용도</th><th>설치</th></tr>
+<tr><td>pyhwp (AGPL-3.0)</td><td>.hwp(HWP5) 열기</td><td><code>pip install pyhwp</code>. PATH에 없으면 <code>WP_HWP5_BIN</code>에 bin 폴더 지정</td></tr>
+<tr><td>python-hwpx + lxml</td><td>대체 HWPX 엔진</td><td><code>pip install python-hwpx lxml</code>, <code>WP_HWPX_ENGINE=pyhwpx</code></td></tr>
+<tr><td>cryptography</td><td>암호로 잠근 편집 역사</td><td><code>pip install cryptography</code></td></tr>
+<tr><td>poppler-utils</td><td>PDF 열기(<code>pdftotext</code>, <code>pdftoppm</code>)</td><td>OS 패키지 관리자</td></tr>
+<tr><td>ImageMagick</td><td>서버의 래스터 PDF 조립</td><td>OS 패키지 관리자</td></tr>
+<tr><td>node + playwright</td><td>벡터(글자가 살아 있는) PDF</td><td><code>WP_PDF_LOCAL=1 WP_HTMLPDF=경로/htmlpdf.js WP_NODE_PATH=…</code></td></tr></table>
+<p>브라우저 인쇄와 “PDF로 저장”은 위 구성요소 없이도 됩니다(브라우저 인쇄 창, 그리고 내장된 html2canvas+jsPDF로 만드는 이미지형 PDF).</p>
+
+<h2 id="firstrun">3. 처음 실행</h2>
+<ol><li>설치형: 서비스가 이미 실행 중입니다. 브라우저에서 <code>http://127.0.0.1:8088/</code>을 엽니다(Windows는 시작 메뉴의 “hanword 열기”). 소스/.pyz는 먼저 서버를 실행하세요.</li>
+<li>빈 문서가 나타나면 바로 입력합니다. 상단에 메뉴(파일·편집·보기·입력·서식·쪽·도구)와 도구모음이 있습니다.</li>
+<li><kbd>Alt</kbd>+<kbd>S</kbd>로 저장하면 문서 폴더에 <code>이름.html</code>로 저장됩니다.</li>
+<li>다른 형식이 필요하면 파일 메뉴의 “한글 문서로 저장 (HWPX)”, “PDF 저장” 등을 씁니다.</li></ol>
+<div class="note"><b>알아 두기</b>접속 주소는 <code>127.0.0.1</code> 또는 <code>localhost</code>로 입력하세요. 다른 이름으로 접속하면 421 오류가 납니다(7장 참고). 포트가 이미 쓰이고 있으면 <code>--port</code>로 바꿉니다.</div>
+
+<h2 id="editor">4. 편집기 사용법</h2>
+<p>메뉴는 로컬 모드 기준입니다. 공개 변환기 모드에서는 파일 메뉴가 “내 PC에서 열기(업로드)”, “…로 내려받기”로 바뀌고(HTML·HWPX·DOCX·TXT·PDF), 서버에는 아무것도 저장되지 않습니다. 단축키는 아래한글 표준을 따릅니다.</p>
+<h3>4.1 메뉴와 단축키</h3>
+<table><tr><th>메뉴</th><th>항목 (단축키)</th></tr>
+<tr><td>파일</td><td>새 문서 (<kbd>Alt+N</kbd>), 불러오기 (<kbd>Alt+O</kbd>), 저장하기 (<kbd>Alt+S</kbd> / <kbd>Ctrl+S</kbd>), 다른 이름으로 저장하기 (<kbd>Alt+V</kbd>), 한글 문서로 저장(HWPX), 한글 문서 열기(HWPX/HWP), PDF 저장 (<kbd>Alt+P</kbd> / <kbd>Ctrl+P</kbd>), 바로 인쇄(브라우저), 끝 (<kbd>Alt+X</kbd>)</td></tr>
+<tr><td>편집</td><td>되돌리기 (<kbd>Ctrl+Z</kbd>), 다시 실행 (<kbd>Ctrl+Shift+Z</kbd>), 오려 두기/복사하기/붙이기 (<kbd>Ctrl+X</kbd>/<kbd>C</kbd>/<kbd>V</kbd>), 모두 선택 (<kbd>Ctrl+A</kbd>), 찾기 (<kbd>Ctrl+F</kbd> / <kbd>F2</kbd>), 찾아 바꾸기 (<kbd>Ctrl+H</kbd>), 다음 찾기 (<kbd>Ctrl+L</kbd>)</td></tr>
+<tr><td>보기</td><td>전체보기(쪽 맞춤), 전체 화면 전환, 쪽 윤곽, 쪽 경계</td></tr>
+<tr><td>입력</td><td>표 (<kbd>Ctrl+N,T</kbd>), 그림 (<kbd>Ctrl+N,I</kbd>), 미디어 삽입(영상·소리), 특수 문자 (<kbd>Ctrl+F10</kbd>), 캡션 달기, 캡션 번호 갱신, 하이퍼링크 (<kbd>Ctrl+K</kbd>), 가로줄, 쪽 나누기 (<kbd>Ctrl+Enter</kbd>), 목록 속성</td></tr>
+<tr><td>서식</td><td>글자 모양 (<kbd>Alt+L</kbd>), 문단 모양 (<kbd>Alt+T</kbd>), 문단 기본값 (<kbd>Alt+Shift+C</kbd>), 스타일 (<kbd>F6</kbd>), 진하게/기울임/밑줄 (<kbd>Ctrl+B</kbd>/<kbd>I</kbd>/<kbd>U</kbd>), 취소선, 글자 크게/작게 (<kbd>Alt+Shift+E</kbd>/<kbd>R</kbd>), 왼쪽·가운데·오른쪽·양쪽 정렬 (<kbd>Ctrl+Shift+L</kbd>/<kbd>C</kbd>/<kbd>R</kbd>/<kbd>M</kbd>)</td></tr>
+<tr><td>쪽</td><td>편집 용지 (<kbd>F7</kbd>), 쪽 나누기, 머리말/꼬리말 (<kbd>Ctrl+N,H</kbd>), 쪽 번호 매기기 (<kbd>Ctrl+N,P</kbd>), 목차 생성, 미주 삽입, 미주 번호 갱신</td></tr>
+<tr><td>도구</td><td>맞춤법 검사 (<kbd>F8</kbd>), 글자 수, 편집 역사 암호 설정/변경, 버그 신고/게시판(게시판을 켠 경우)</td></tr></table>
+<p><kbd>Ctrl+N,T</kbd>처럼 쉼표로 쓴 것은 <kbd>Ctrl+N</kbd>을 누른 뒤 이어서 <kbd>T</kbd>를 누르는 2단계 키입니다. 화면에 메뉴가 일부 다르면 버전 차이입니다.</p>
+<h3>4.2 글자와 문단</h3>
+<p>글자 모양은 도구모음 또는 글자 모양 대화상자(<kbd>Alt+L</kbd>)에서 정합니다: 글꼴, 크기, 글자색, 음영색, 진하게·기울임·밑줄·취소선, 위첨자(<kbd>Alt+Shift+P</kbd>)·아래첨자(<kbd>Alt+Shift+S</kbd>). 문단 모양(<kbd>Alt+T</kbd>)에서 정렬·들여쓰기 등을 정합니다. 제목(h1~h3)과 목록(글머리표/번호, 9단계 수준)은 스타일(<kbd>F6</kbd>)과 목록 속성에서 지정합니다.</p>
+<h3>4.3 표</h3>
+<p>입력 → 표로 만듭니다. 셀 안에서 <kbd>F5</kbd>를 눌러 블록을 잡고 방향키로 범위를 넓히면 병합·나눔·테두리·배경을 한꺼번에 바꿀 수 있습니다.</p>
+<table><tr><th>기능</th><th>조작</th></tr><tr><td>셀 블록</td><td><kbd>F5</kbd> → 방향키</td></tr><tr><td>병합 / 나눔</td><td>블록 상태에서 <kbd>M</kbd> / <kbd>S</kbd></td></tr><tr><td>테두리 / 배경</td><td>블록 상태에서 <kbd>L</kbd> / <kbd>C</kbd></td></tr></table>
+<p>표 배치는 글자처럼 · 문단(어울림) · 고정 세 가지입니다. 어울림은 끌면 좌/우가 자동 전환되고 글이 표를 피해 흐릅니다. 표를 위아래로 나누기(표−)·붙이기(표+)도 됩니다.</p>
+<h3>4.4 그림과 도형</h3>
+<ul><li><b>그림</b>(입력 → 그림): 하나의 개체 블록이 됩니다. 모서리·변 손잡이로 가로·세로 크기를 따로 조절하고, 네 변을 잘라내는 자르기, 회전·반전, 어울림 배치, 캡션(번호와 설명)을 쓸 수 있습니다. 그림은 문서 안에 내장됩니다.</li>
+<li><b>도형</b>: 도구모음의 도형▾에서 사각형·원·선을 고릅니다. 선은 양 끝점을 끌어 수평·수직·대각선을 만들며 각도가 자동 스냅됩니다. 채우기색·선색·두께·실선/파선/점선을 바꾸고, 묶기·맞춤·배분, 겹침 순서(앞/뒤)를 지정합니다.</li></ul>
+<h3>4.5 미디어와 쪽 배경</h3>
+<ul><li>입력 → 미디어 삽입(영상·소리): 문서 안에서 재생되는 영상을 넣습니다. 영상을 클릭하면 재생/일시정지, 컨트롤바로 구간·음량을 조절합니다. 공개 변환기 모드에서는 고른 파일을 이 브라우저 안에만 저장합니다. 로컬 모드의 삽입용 미디어는 문서 폴더의 <code>media/</code>에 있습니다.</li>
+<li>쪽 배경색: 편집 용지에서 색 견본을 골라 모든 쪽에 입힙니다.</li>
+<li>그림을 쪽 배경으로 지정하는 기능은 아직 계획 단계입니다(메뉴에 “계획중”으로 표시).</li></ul>
+<h3>4.6 쪽 설정, 머리말·꼬리말, 목차, 미주</h3>
+<ul><li><b>편집 용지</b>(<kbd>F7</kbd>): 용지 크기, 방향, 여백, 쪽 배경색.</li>
+<li><b>머리말/꼬리말</b>, <b>쪽 번호 매기기</b>: 쪽 메뉴. <b>쪽 나누기</b>: <kbd>Ctrl+Enter</kbd>.</li>
+<li><b>목차 생성</b>: 쪽 → 목차 생성. 현재 쪽번호 기준 목차를 1쪽 맨 앞에 만듭니다. 만든 뒤에는 일반 텍스트라 자유롭게 고칠 수 있고, 내용이 바뀌면 다시 생성해야 합니다(자동 갱신 없음).</li>
+<li><b>미주·캡션 번호</b>: 넣고 지워도 번호가 자동으로 다시 매겨집니다. 필요하면 “미주 번호 갱신”, “캡션 번호 갱신”을 누릅니다.</li></ul>
+<h3>4.7 찾기·바꾸기, 맞춤법, 글자 수</h3>
+<p><kbd>Ctrl+F</kbd>(<kbd>F2</kbd>) 찾기, <kbd>Ctrl+L</kbd> 다음 찾기, <kbd>Ctrl+H</kbd> 찾아 바꾸기. <kbd>F8</kbd> 맞춤법 검사, 도구 → 글자 수.</p>
+<h3>4.8 되돌리기와 편집 역사</h3>
+<p>되돌리기는 무손실입니다. 되돌린 뒤 새로 편집해도 이전 흐름이 사라지지 않고, 계속 누르면 버렸던 가지까지 거슬러 올라갑니다. <b>도구 → 편집 역사 암호 설정/변경</b>으로 암호를 지정하면 저장할 때 역사가 암호로 잠겨 문서와 함께 보존되고(<code>cryptography</code> 필요, 기본 꺼짐), 다시 열 때 암호를 넣으면 지난 세션 역사까지 이어서 되돌릴 수 있습니다. 암호는 어디에도 저장되지 않으므로 잃어버리면 역사만 복구할 수 없습니다(문서 본문은 무관).</p>
+<h3>4.9 인쇄와 PDF</h3>
+<ul><li><b>PDF 저장</b>(<kbd>Alt+P</kbd>) / <b>바로 인쇄(브라우저)</b>: 브라우저 인쇄 창을 쓰거나, 브라우저 안에서 이미지형 PDF를 만듭니다. 추가 구성요소가 필요 없습니다.</li>
+<li>벡터 PDF(글자가 선택·검색되는 PDF)는 서버 쪽 node+playwright 구성이 있을 때만 가능합니다(2.6절).</li>
+<li>프린터로 직접 인쇄하는 별도 장치용 기능은 이 공개판에 없습니다. 브라우저 인쇄를 사용하세요.</li></ul>
+<h3>4.10 다른 형식으로 저장·열기</h3>
+<ul><li><b>TXT 저장</b>: 표는 상자 글자로 그려 메모장·터미널에서도 모양이 유지되고, 제목은 밑줄, 목록은 글머리표, 그림·영상·도형은 [그림]/[영상]/[도형]으로 표시됩니다. 쪽 나누기는 폼피드 문자로 남아 다시 열면 복원됩니다.</li>
+<li><b>TXT 열기</b>: UTF-8/CP949를 자동 판별해 문단으로 불러옵니다.</li>
+<li><b>PDF 열기</b>: “그대로”(쪽을 그림으로, 편집 불가·모양 유지) 또는 “글자만”(글자를 뽑아 문단으로, 편집 가능·배치 소실). 스캔본처럼 글자가 없는 PDF는 “글자만”이 거절되니 “그대로”를 쓰세요.</li></ul>
+
+<h2 id="formats">5. 파일 형식과 한계</h2>
+<table><tr><th>형식</th><th>열기</th><th>저장</th><th>비고</th></tr>
+<tr><td>HTML (.html)</td><td>예</td><td>예</td><td>원본 형식. 그림 내장</td></tr>
+<tr><td>HWPX (.hwpx)</td><td>예</td><td>예</td><td>OWPML(KS X 6101), 표준 라이브러리로 처리</td></tr>
+<tr><td>DOCX (.docx)</td><td>예</td><td>예</td><td></td></tr>
+<tr><td>TXT (.txt)</td><td>예</td><td>예</td><td>UTF-8/CP949 판별</td></tr>
+<tr><td>HWP (.hwp, HWP5)</td><td>예(pyhwp 필요)</td><td>아니오</td><td>HWP 3.x는 미지원</td></tr>
+<tr><td>DOC (.doc)</td><td>글자만</td><td>아니오</td><td>서식 없음</td></tr>
+<tr><td>PDF (.pdf)</td><td>글자 또는 쪽 그림</td><td>예</td><td>poppler-utils 필요(열기)</td></tr></table>
+<h3>알려진 한계</h3>
+<ul><li>복잡한 HWPX 개체(차트 등), 변경 추적, 매크로는 지원하지 않습니다.</li><li>.doc는 텍스트만, .hwp는 pyhwp가 있어야 하며 HWP 3.x는 열 수 없습니다.</li><li>PDF 가져오기는 글자 또는 쪽 그림입니다.</li></ul>
+<h3>크기·동시성 제한</h3>
+<ul><li>CLI 입력 최대 200 MB, 서버 POST 본문 최대 64 MB.</li><li>PDF 래스터 최대 300쪽.</li><li>동시 변환 수 <code>WP_CONV_MAX</code>(기본 2). 초과하면 HTTP 503(잠시 후 다시 시도).</li></ul>
+<h3>왕복 검사</h3>
+<p>형식을 바꿔 저장했다가 다시 읽었을 때 내용이 손실되는지 확인하려면 <code>hanword roundtrip 파일 --via hwpx|docx|html</code>을 씁니다(손실이 있으면 종료 코드 1).</p>
+
+<h2 id="backup">6. 문서 저장 위치와 백업</h2>
+<p>로컬 모드의 문서 폴더(<code>WP_DOCS</code>)의 구성:</p>
+<table><tr><th>경로</th><th>내용</th></tr>
+<tr><td><code>이름.html</code></td><td>문서 자체(자기완결 HTML, 그림은 data URI)</td></tr>
+<tr><td><code>images/</code></td><td>그림 파일</td></tr><tr><td><code>media/</code></td><td>삽입용 미디어</td></tr>
+<tr><td><code>.hist/</code></td><td>암호화된 편집 역사(<code>cryptography</code> 필요)</td></tr><tr><td><code>print/</code></td><td>인쇄용 임시 파일</td></tr>
+<tr><td><code>board.jsonl</code></td><td>의견 게시판을 켠 경우의 글</td></tr></table>
+<table><tr><th>OS</th><th>기본 문서 폴더</th></tr><tr><td>Windows</td><td><code>%ProgramData%\hanword\documents</code></td></tr><tr><td>macOS</td><td><code>/Library/Application Support/hanword</code></td></tr><tr><td>Linux(설치형)</td><td><code>/var/lib/hanword</code></td></tr><tr><td>직접 실행</td><td><code>~/hanword-documents</code></td></tr></table>
+<p><b>백업</b>: 문서 폴더를 통째로 복사합니다(서비스를 멈추거나 편집이 없을 때). <b>복구</b>: 서비스를 멈추고 폴더 내용을 되돌려 놓은 뒤 다시 시작합니다. 같은 형식으로 오래 보관하려면 HWPX나 HTML로 별도 내보내기도 해 두세요.</p>
+
+<h2 id="trouble">7. 문제 해결</h2>
+<table><tr><th>증상</th><th>원인과 해결</th></tr>
+<tr><td>포트가 이미 사용 중이라 시작되지 않음</td><td><code>--port</code>(또는 <code>WP_PORT</code>)로 다른 포트를 지정.</td></tr>
+<tr><td>접속하면 421 Misdirected</td><td>Host 헤더 검사(DNS 리바인딩 방어) 때문입니다. <code>127.0.0.1</code>/<code>localhost</code>로 접속하거나, LAN에서 쓰는 이름을 <code>WP_ALLOWED_HOSTS</code>에 추가.</td></tr>
+<tr><td>“listen 거부” 같은 메시지로 시작 안 됨</td><td>바인드 정책입니다. 127.0.0.1이 아닌 주소는 <code>WP_PUBLIC=1</code> 또는 <code>WP_ALLOW_REMOTE=1</code>일 때만 허용(8장).</td></tr>
+<tr><td>503 (바쁨)</td><td>동시 변환 한도 초과. 잠시 후 재시도하거나 <code>WP_CONV_MAX</code>를 늘립니다.</td></tr>
+<tr><td>글꼴이 다르게 보임</td><td>해당 글꼴이 없어 번들 글꼴로 대체됨. 함초롬/은바탕은 번들되지 않습니다(10장 글꼴).</td></tr>
+<tr><td>.hwp를 열 수 없음</td><td><code>pip install pyhwp</code> 후 필요하면 <code>WP_HWP5_BIN</code> 지정.</td></tr>
+<tr><td>편집 역사 암호 오류</td><td>암호가 틀렸거나 <code>cryptography</code>가 없음. 암호는 복구할 수 없습니다.</td></tr>
+<tr><td>PDF를 못 엶</td><td>poppler-utils(<code>pdftotext</code>, <code>pdftoppm</code>) 설치 확인.</td></tr>
+<tr><td>Windows SmartScreen / macOS Gatekeeper</td><td>서명되지 않은 파일입니다. 2.2, 2.3절 참고.</td></tr>
+<tr><td>설정을 바꿨는데 반영 안 됨</td><td>서비스를 재시작해야 합니다(10장 서비스 설정).</td></tr></table>
+<p>로그 위치: Linux <code>journalctl -u hanword</code> · macOS <code>/Library/Logs/hanword</code> · Windows 서비스 폴더 <code>C:\Program Files\hanword\</code>의 WinSW 로그 · 직접 실행은 터미널 출력.</p>
+
+<h2 id="security">8. 보안</h2>
+<div class="warn"><b>로컬 모드에는 로그인이 없습니다</b>포트에 접근할 수 있는 사람은 누구나 문서를 읽고 쓰고 지울 수 있습니다. 그래서 기본은 127.0.0.1에만 바인드하며, 다른 주소는 <code>WP_PUBLIC=1</code> 또는 <code>WP_ALLOW_REMOTE=1</code> 없이는 거부됩니다. <code>WP_ALLOW_REMOTE=1</code>은 믿을 수 있는 LAN에서만 쓰세요.</div>
+<ul><li>Host 헤더 검사(DNS 리바인딩 방어, 불일치 시 421), 교차 출처 POST 차단(403).</li>
+<li>요청마다 nonce가 붙는 CSP, X-Frame-Options DENY, nosniff, no-referrer.</li>
+<li>업로드 크기 제한, HWPX/DOCX의 zip 폭탄·XXE에 안전한 파싱(expat, 엔티티 검사), 링크 스킴 화이트리스트.</li>
+<li><code>WP_DEBUG=1</code>은 로컬 디버그 브리지를 엽니다. 공유 컴퓨터에서는 절대 켜지 마세요.</li></ul>
+<h3>인터넷에 공개하려면</h3>
+<p><code>WP_PUBLIC=1</code>(저장 없는 변환기 모드)로 실행하고, HTTPS 리버스 프록시 뒤에 두며, <code>WP_PUBLIC_HOST</code>에 내 도메인을 지정하세요. 로컬 모드를 그대로 인터넷에 열면 안 됩니다.</p>
+<pre><code># 한워드: 127.0.0.1에서 공개 모드 실행
+WP_PUBLIC=1 WP_PUBLIC_HOST=docs.example.com WP_SITE_URL=https://docs.example.com hanword serve --port 8088
+
+# Caddy
+docs.example.com {
+    reverse_proxy 127.0.0.1:8088
+}
+
+# nginx (server 블록 안, TLS 인증서 설정은 별도)
+location / {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_set_header Host $host;
+    client_max_body_size 64m;
+}</code></pre>
+<p>취약점은 GitHub Security Advisories로 알려 주세요(저장소의 <code>SECURITY.md</code> 참고).</p>
+
+<h2 id="cli">9. CLI 참고</h2>
+<p>브라우저 없이 같은 코어를 씁니다. 패키지 설치 시 <code>hanword</code>, 소스에서는 <code>python hanword</code>. 전역 옵션 <code>--json</code>은 기계가 읽기 좋은 JSON 출력을 냅니다. 파일 자리에 <code>-</code>를 쓰면 표준 입력/출력입니다. 입력은 최대 200 MB.</p>
+<table><tr><th>명령</th><th>설명</th></tr>
+<tr><td><code>formats</code></td><td>읽기/쓰기 가능한 형식 목록</td></tr>
+<tr><td><code>convert IN OUT [--from F] [--to F] [--paper A4] [--orient portrait|landscape] [--pdf-mode text|image]</code></td><td>형식 변환. 형식은 확장자로 추정하며 <code>--from/--to</code>로 지정 가능</td></tr>
+<tr><td><code>info FILE</code></td><td>문서 요약 정보</td></tr>
+<tr><td><code>check FILE</code></td><td>파싱과 검증. 오류가 있으면 종료 코드 1</td></tr>
+<tr><td><code>roundtrip FILE [--via hwpx|docx|html]</code></td><td>왕복 변환 후 손실 검사. 손실이 있으면 1</td></tr>
+<tr><td><code>model FILE|-</code></td><td>문서 모델(JSON) 출력(<code>--json</code>이면 한 줄)</td></tr>
+<tr><td><code>render MODEL.json|- OUT|-</code></td><td>모델을 편집기 HTML로(OUT 확장자가 .docx/.hwpx/.txt/.pdf면 그 형식)</td></tr>
+<tr><td><code>apply MODEL|- OPS.json|- [-o OUT]</code></td><td>편집 연산을 적용해 새 모델 JSON 출력. MODEL은 .json 또는 문서</td></tr>
+<tr><td><code>debug state|log|snapshot|eval JS|cmd OP [--arg A] [--port 8088]</code></td><td>로컬 디버그 서버 전용(<code>WP_DEBUG=1</code>). 꺼져 있으면 종료 코드 3</td></tr>
+<tr><td><code>serve</code>, <code>--version</code></td><td>(설치형) 서버 실행 / 버전 출력</td></tr></table>
+<h3>종료 코드</h3>
+<table><tr><th>코드</th><th>뜻</th></tr><tr><td>0</td><td>성공</td></tr><tr><td>1</td><td>검사(check)·왕복(roundtrip)에서 결함 발견</td></tr><tr><td>2</td><td>사용법 또는 입력 오류</td></tr><tr><td>3</td><td>디버그 비활성</td></tr></table>
+<h3>예</h3>
+<pre><code>hanword formats
+hanword convert report.docx report.hwpx
+hanword convert notes.txt notes.pdf --paper A4 --orient landscape
+hanword convert scan.pdf scan.html --pdf-mode image
+hanword info report.hwpx
+hanword --json check report.hwpx; echo $?
+hanword roundtrip report.docx --via hwpx
+hanword model report.docx &gt; report.model.json
+hanword render report.model.json out.html
+cat report.docx | hanword convert - out.hwpx --from docx</code></pre>
+<h3>apply: 편집 연산</h3>
+<p>위치는 <code>[블록 번호, 글자 오프셋]</code>(0부터)입니다. 연산 목록은 순서대로 적용되며 하나라도 실패하면 전체가 실패하고(어느 연산인지 표시) 입력은 바뀌지 않습니다. 표·그림·쪽 나누기 같은 잠금 블록 안의 글은 편집할 수 없습니다.</p>
+<table><tr><th>op</th><th>인자</th></tr>
+<tr><td><code>insert_text</code></td><td><code>pos</code>, <code>text</code></td></tr>
+<tr><td><code>delete_range</code></td><td><code>start</code>, <code>end</code> (start &lt; end)</td></tr>
+<tr><td><code>set_style</code></td><td><code>start</code>, <code>end</code>, <code>attrs</code> — bold/italic/underline/strike(true), color/highlight(#RRGGBB), size(1~400), font, link. 값 null 또는 false는 해제</td></tr>
+<tr><td><code>set_block_type</code></td><td><code>index</code>, <code>type</code>(p/h1/h2/h3/li/div), 선택: <code>list</code>(bullet|number), <code>level</code>(li만), <code>align</code>, <code>indent</code></td></tr>
+<tr><td><code>split_paragraph</code></td><td><code>pos</code></td></tr><tr><td><code>merge_paragraph</code></td><td><code>index</code> (index 블록과 다음 블록 병합)</td></tr>
+<tr><td><code>insert_pgbreak</code></td><td><code>pos</code></td></tr><tr><td><code>delete_block</code></td><td><code>index</code></td></tr><tr><td><code>insert_block</code></td><td><code>index</code>, <code>block</code></td></tr></table>
+<pre><code>[
+  {"op":"insert_text","pos":[0,0],"text":"제목: "},
+  {"op":"set_style","start":[0,0],"end":[0,3],"attrs":{"bold":true,"color":"#1f5fbf"}},
+  {"op":"set_block_type","index":0,"type":"h1"},
+  {"op":"split_paragraph","pos":[0,3]},
+  {"op":"insert_pgbreak","pos":[1,0]}
+]</code></pre>
+<pre><code>hanword apply report.docx ops.json -o edited.model.json
+hanword render edited.model.json edited.hwpx
+hanword model report.docx | hanword apply - ops.json | hanword render - out.html</code></pre>
+
+<h2 id="config">10. 설정 참고</h2>
+<p>환경변수로 설정합니다. 명령줄 옵션(<code>--host --port --data</code>)이 있으면 옵션이 우선합니다.</p>
+<table><tr><th>변수</th><th>기본</th><th>설명</th></tr>
+<tr><td><code>WP_HOST</code></td><td>127.0.0.1</td><td>바인드 주소</td></tr>
+<tr><td><code>WP_PORT</code></td><td>8088</td><td>포트</td></tr>
+<tr><td><code>WP_DOCS</code></td><td>직접 실행 시 <code>~/hanword-documents</code></td><td>문서 폴더</td></tr>
+<tr><td><code>WP_DEBUG</code></td><td>0</td><td>1이면 <code>hanword debug</code>용 로컬 디버그 브리지(공유 컴퓨터 금지)</td></tr>
+<tr><td><code>WP_PUBLIC</code></td><td>(끔)</td><td>1이면 저장 없는 공개 변환기 모드(브라우저 올리기/내려받기만, 인쇄·끝 없음)</td></tr>
+<tr><td><code>WP_PUBLIC_HOST</code></td><td></td><td>허용할 추가 Origin 호스트(쉼표 구분)</td></tr>
+<tr><td><code>WP_SITE_URL</code></td><td>(없음)</td><td>공개 주소. robots.txt의 Sitemap, <code>/sitemap.xml</code>, canonical 링크에 사용</td></tr>
+<tr><td><code>WP_BOARD_ENABLE</code></td><td>(끔)</td><td>1이면 익명 의견 게시판(<code>WP_DOCS/board.jsonl</code>). <code>WP_BOARD_ADMIN</code>=삭제 키</td></tr>
+<tr><td><code>WP_ALLOW_REMOTE</code></td><td>(끔)</td><td>1이면 로컬 모드에서 비루프백 바인드 허용(로그인 없음! 믿는 LAN만)</td></tr>
+<tr><td><code>WP_ALLOWED_HOSTS</code></td><td></td><td>로컬 모드에서 추가로 허용할 Host 이름(예: LAN용 호스트명)</td></tr>
+<tr><td><code>WP_CONV_MAX</code></td><td>2</td><td>동시 변환 수</td></tr>
+<tr><td><code>WP_SOCK_TIMEOUT</code></td><td>60</td><td>소켓 타임아웃(초)</td></tr>
+<tr><td><code>WP_MAX_BODY</code></td><td>67108864</td><td>POST 본문 최대 크기(바이트, 64 MB)</td></tr>
+<tr><td><code>WP_HWPX_ENGINE</code></td><td></td><td><code>pyhwpx</code>면 python-hwpx 엔진</td></tr>
+<tr><td><code>WP_HWP5_BIN</code></td><td></td><td>pyhwp bin 폴더</td></tr>
+<tr><td><code>WP_PDF_LOCAL</code> / <code>WP_HTMLPDF</code> / <code>WP_NODE_PATH</code></td><td></td><td>벡터 PDF(node+playwright): <code>WP_PDF_LOCAL=1</code>, htmlpdf.js 경로, node 모듈 경로</td></tr>
+<tr><td><code>WP_FONTDIR</code></td><td>app/font</td><td>추가 웹폰트 폴더</td></tr></table>
+<h3>서비스 설정 바꾸기</h3>
+<pre><code># Linux
+sudo systemctl edit hanword      # [Service] 아래에 Environment=WP_CONV_MAX=4
+sudo systemctl restart hanword
+
+# macOS: plist의 EnvironmentVariables 수정 후
+sudo launchctl bootout system /Library/LaunchDaemons/com.hanword.server.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.hanword.server.plist
+
+# Windows: C:\Program Files\hanword\hanword-service.xml 의 &lt;env&gt; 수정 후
+sc stop hanword
+sc start hanword</code></pre>
+<h3>글꼴</h3>
+<p>번들 글꼴(SIL OFL 1.1, 공식 배포본 그대로): 나눔고딕, 나눔명조(TTF), Noto Sans KR(OTF), Pretendard(woff2). <b>Noto Serif KR</b>, <b>D2Coding</b>, <b>함초롬바탕/함초롬돋움</b>(한컴)과 <b>은바탕</b>(GPL)은 번들되지 않으며, 없으면 번들 글꼴로 대체됩니다. 쓰려면 공식 배포처(한컴 함초롬체 내려받기 페이지, Un 글꼴 패키지 예: <code>fonts-unfonts-core</code>)에서 받아 woff2로 변환하고 글꼴 폴더(<code>app/font</code> 또는 <code>WP_FONTDIR</code>)에 다음 이름으로 두세요.</p>
+<pre><code>NotoSerifKR-400.woff2       NotoSerifKR-700.woff2
+D2Coding-400.woff2          D2Coding-700.woff2
+Hamchorom-Batang-400.woff2  Hamchorom-Batang-700.woff2
+Hamchorom-Dotum-400.woff2   Hamchorom-Dotum-700.woff2
+UnBatang-400.woff2          UnBatang-700.woff2
+
+pip install fonttools brotli
+fonttools ttLib.woff2 compress 원본.ttf</code></pre>
+
+<h2 id="licence">11. 라이선스와 서드파티</h2>
+<ul><li>한워드: MIT, Copyright (c) 2026 GSUNGMOON.</li>
+<li>번들 글꼴: SIL OFL 1.1(나눔고딕·나눔명조·Noto Sans KR·Pretendard, 출처·sha256은 licenses/README.md).</li>
+<li>번들 JavaScript: html2canvas, jsPDF(각 프로젝트의 라이선스는 저장소의 NOTICE 및 파일 머리말 참고).</li>
+<li>선택 구성요소는 번들되지 않으며 각자의 라이선스를 따릅니다. 특히 <b>pyhwp는 AGPL-3.0</b>이라 직접 설치하는 경우에만 사용됩니다.</li>
+<li>함초롬체(한컴), 은바탕(GPL)은 포함되지 않습니다.</li></ul>
+<footer>한워드(hanword) 0.1.0 설명서 · MIT 라이선스 · 화면 이름은 버전에 따라 조금 다를 수 있습니다.</footer></div></body></html>

@@ -1,0 +1,64 @@
+hanword - third-party notices
+=============================
+
+hanword itself is released under the MIT License (see LICENSE / LICENSE.txt).
+Every package (Windows installer, macOS .pkg, Linux tarball and .pyz) contains the
+web files and fonts below. The self-contained packages (all but the .pyz) also bundle a
+Python runtime. Full licence texts are in the licenses/ folder next to this file.
+
+Bundled in every package
+------------------------
+
+* html2canvas 1.4.1 (html2canvas.min.js) - MIT License
+  Copyright (c) 2022 Niklas von Hertzen. https://html2canvas.hertzen.com
+
+* jsPDF 2.5.1 (jspdf.min.js) - MIT License
+  Copyright (c) 2010-2021 James Hall, yWorks GmbH, Lukas Hollaender and contributors.
+  https://github.com/parallax/jsPDF
+  The minified build includes third-party code under permissive licences as listed in its
+  own header comments (e.g. pako / fflate - MIT / zlib, FileSaver.js - MIT, and others).
+
+* hwpx_skeleton.hwpx - an empty HWPX document skeleton copied from python-hwpx
+  (hwpx/data/Skeleton.hwpx) - Apache License 2.0. See NOTICE-hwpx_skeleton.txt.
+  https://pypi.org/project/python-hwpx/
+
+* Fonts (font/) - SIL Open Font License 1.1, unmodified upstream binaries
+  - NanumGothic, NanumMyeongjo (TTF) - Copyright (c) 2010-2011 NAVER Corporation (NHN),
+    Reserved Font Names Nanum, NanumGothic, NanumMyeongjo, ... (google/fonts ofl/nanum*)
+  - Noto Sans KR (SubsetOTF) - Copyright 2014-2021 Adobe, Reserved Font Name "Source" (notofonts/noto-cjk)
+  - Pretendard 1.3.9 (woff2) - Copyright (c) 2021 Kil Hyung-jin, Reserved Font Name "Pretendard"
+  Licence texts, source URLs and sha256: licenses/README.md and licenses/fonts/.
+
+Bundled in the self-contained packages only (not in the .pyz)
+-------------------------------------------------------------
+
+* Python runtime and standard library
+  Python Software Foundation License Version 2 - https://docs.python.org/3/license.html
+  Copyright (c) 2001 Python Software Foundation. All rights reserved.
+
+* OpenSSL (via the Python ssl module, where bundled) - Apache License 2.0
+  https://www.openssl.org/source/license.html
+
+* libffi, zlib, bzip2, xz/liblzma, expat, mpdecimal, SQLite (Python extension dependencies,
+  where bundled) - permissive licences (MIT / zlib / BSD-style / public domain)
+  - see https://docs.python.org/3/license.html
+
+* PyInstaller bootloader - GPL 2.0 with the PyInstaller bootloader exception, which explicitly
+  allows distributing the bootloader with programs under any license.
+  https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt
+
+* Windows only: WinSW (Windows Service Wrapper) v2.12.0 - MIT License
+  Copyright (c) 2008-2020 Kohsuke Kawaguchi, Sun Microsystems, Inc., CloudBees, Inc.,
+  Oleg Nenashev and other contributors. Full text: WinSW-LICENSE.txt in the install folder.
+  https://github.com/winsw/winsw
+
+Optional, NOT bundled (install yourself if you need the feature)
+----------------------------------------------------------------
+
+* pyhwp - GNU Affero General Public License v3.0 - legacy .hwp import.
+  Not shipped with hanword; it runs only if you install it. Using it is subject to the AGPL.
+* python-hwpx / lxml (Apache-2.0 / BSD) - alternative HWPX engine (WP_HWPX_ENGINE=pyhwpx).
+* cryptography (Apache-2.0 / BSD) - encrypted edit history.
+* Node.js + Playwright (MIT / Apache-2.0) - vector PDF export (WP_PDF_LOCAL=1).
+* poppler-utils (pdftotext / pdftoppm, GPL-2.0) - PDF import, run as separate programs.
+* ImageMagick (ImageMagick License) - image conversion, run as a separate program.
