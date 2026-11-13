@@ -94,7 +94,19 @@ def _cli(argv) -> int:
     return 0
 
 
+def _stdio_safe() -> None:
+    """Windows consoles (cp1252, ...) cannot encode '→' or Hangul: replace instead of crashing."""
+    for s in (sys.stdout, sys.stderr):
+        enc = (getattr(s, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if enc not in ("utf8", "utf8sig") and hasattr(s, "reconfigure"):
+            try:
+                s.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
 def run(argv=None) -> int:
+    _stdio_safe()
     argv = sys.argv[1:] if argv is None else list(argv)
     if not argv:
         print(HINT)

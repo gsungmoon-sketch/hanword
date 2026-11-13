@@ -28,12 +28,12 @@ import hanword_core as core
 
 def emit(args, obj, human=None):
     if args.json or human is None:
-        print(json.dumps(obj, ensure_ascii=False, indent=None if args.json else 2))
+        print(json.dumps(obj, ensure_ascii=bool(args.json), indent=None if args.json else 2))   # --json = ASCII(\uXXXX) — 콘솔 인코딩 무관
     else:
         print(human)
 
 def fail(args, msg, code=2):
-    if args.json: print(json.dumps({"ok": False, "err": msg}, ensure_ascii=False))
+    if args.json: print(json.dumps({"ok": False, "err": msg}))
     else: sys.stderr.write("hanword: %s\n" % msg)
     sys.exit(code)
 
@@ -120,7 +120,7 @@ def cmd_roundtrip(a):
     sys.exit(0 if r["ok"] else 1)
 
 def cmd_model(a):
-    print(json.dumps(load_model(a.file), ensure_ascii=False, indent=None if a.json else 1))
+    print(json.dumps(load_model(a.file), ensure_ascii=bool(a.json), indent=None if a.json else 1))
 
 def cmd_render(a):
     m = load_model(a.model)
@@ -167,11 +167,12 @@ def cmd_debug(a):
     for _ in range(100):   # 페이지(?debug=1)가 폴링·실행할 때까지 최대 10초
         r = json.loads(_http(a.port, "/api/debug/result?id=%d" % cid))
         if not (isinstance(r, dict) and r.get("pending")):
-            print(json.dumps(r, ensure_ascii=False)); return
+            print(json.dumps(r)); return
         time.sleep(0.1)
     fail(a, "응답 없음 — ?debug=1 페이지가 열려 있어야 함", 3)
 
 def main():
+    core.stdio_safe()
     ap = argparse.ArgumentParser(prog="hanword", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="기계용 JSON 한 줄 출력")
     sp = ap.add_subparsers(dest="cmd", required=True)

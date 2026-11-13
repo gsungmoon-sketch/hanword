@@ -230,6 +230,12 @@ class _MStack(list):   # 인라인 서식 스택 + 단계별 병합 결과 캐�
         self._m.pop(); return super().pop()
     def top(self): return self._m[-1]
 
+def _log_safe(msg):   # 라이브러리 로그: 비 UTF-8 stderr(Windows cp1252)·닫힌 stderr 에서 변환이 죽지 않게
+    try: sys.stderr.write(msg)
+    except Exception:
+        try: sys.stderr.write(msg.encode("ascii", "replace").decode("ascii"))
+        except Exception: pass
+
 class P(EofSafeParser):   # close() 꼬리 선형화(옛 html.parser 2차 시간)
     SKIP={"head","title","style","script","noscript"}   # 비콘텐츠 컨테이너(끝태그 있음)=깊이추적 스킵
     SKIP_VOID={"meta","link","base"}                     # 비콘텐츠 void(끝태그 없음)=깊이추적 금지(안 그러면 skip 영구상승→본문 소실)
@@ -1068,7 +1074,7 @@ def html_to_hwpx(html, page=None):   # 호출형(서버 in-process): HTML→.hwp
             raise HwpxInputError("변환할 수 없는 문서(%s)"%type(e).__name__)
         except Exception as e:
             if HwpxDocument is None: raise HwpxInputError("hwpx 생성 실패(%s)"%type(e).__name__)
-            sys.stderr.write("[hwpx_std] write 실패(%s) → python-hwpx 폴백\n"%type(e).__name__)
+            _log_safe("[hwpx_std] write 실패(%s) → python-hwpx 폴백\n"%type(e).__name__)
     try:
         return _html_to_hwpx_pyhwpx(html)
     except HwpxInputError: raise
@@ -1681,7 +1687,7 @@ def hwpx_bytes_to_html(data):   # 호출형(서버 in-process): .hwpx/.hwp(/.doc
                 raise HwpxInputError(str(e))
             except Exception as e:
                 if HwpxDocument is None: raise HwpxInputError("hwpx 해석 실패(%s)"%type(e).__name__)
-                sys.stderr.write("[hwpx_std] read 실패(%s) → python-hwpx 폴백\n"%type(e).__name__)
+                _log_safe("[hwpx_std] read 실패(%s) → python-hwpx 폴백\n"%type(e).__name__)
         try:
             return import_hwpx(data)+_hwpx_meta_html(data)
         except HwpxInputError: raise

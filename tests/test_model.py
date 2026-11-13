@@ -156,6 +156,36 @@ class Stdlib(unittest.TestCase):
         r = subprocess.run([sys.executable, "-s", "-I", "-c", code], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[-500:]); self.assertEqual(r.stdout.split(), ["docx", "hwpx", "a", "b"])
 
+class ConsoleEncoding(unittest.TestCase):   # v0.1.6 Windows 스모크: cp1252 콘솔에서 '→' 출력 UnicodeEncodeError
+    def run_cli(self, *args, entry=False):
+        import subprocess
+        env = dict(os.environ, PYTHONIOENCODING="cp1252"); env.pop("PYTHONUTF8", None)
+        prog = [os.path.join(APP, "packaging", "entry.py")] if entry else [os.path.join(APP, "hanword")]
+        r = subprocess.run([sys.executable, "-X", "utf8=0"] + prog + [str(a) for a in args], capture_output=True, timeout=120, env=env)
+        self.assertNotIn(b"UnicodeEncodeError", r.stderr + r.stdout, args)
+        return r
+    def test_smoke_cli_paths_cp1252(self):
+        import tempfile, shutil
+        tmp = tempfile.mkdtemp(prefix="hw-enc-")
+        try:
+            src = os.path.join(tmp, "가.html"); hx = os.path.join(tmp, "가.hwpx"); back = os.path.join(tmp, "back.html")
+            with open(src, "w", encoding="utf-8") as f: f.write("<p>한글 → 문단 ✓</p><table><tr><td>가</td></tr></table>")
+            self.assertEqual(self.run_cli("--json", "formats").returncode, 0)
+            self.assertEqual(self.run_cli("formats").returncode, 0)
+            self.assertEqual(self.run_cli("convert", src, hx).returncode, 0)
+            self.assertEqual(self.run_cli("convert", hx, back).returncode, 0)
+            with open(back, encoding="utf-8") as f: self.assertIn("한글 → 문단 ✓", f.read())
+            r = self.run_cli("--json", "info", hx); self.assertEqual(r.returncode, 0)
+            self.assertTrue(json.loads(r.stdout.decode("ascii").strip().splitlines()[-1]))   # --json = ASCII
+            self.assertEqual(self.run_cli("info", hx).returncode, 0)
+            self.assertEqual(self.run_cli("--json", "model", hx).returncode, 0)
+            self.assertEqual(self.run_cli("check", src).returncode, 0)
+            self.assertEqual(self.run_cli("info", os.path.join(tmp, "없음.hwpx")).returncode, 2)          # 한글 오류 문구
+            self.assertEqual(self.run_cli("--json", "info", os.path.join(tmp, "없음.hwpx")).returncode, 2)
+            self.assertEqual(self.run_cli("--version", entry=True).returncode, 0)
+            self.assertEqual(self.run_cli("selfcheck-imports", "hanword_core", "server", entry=True).returncode, 0)
+        finally: shutil.rmtree(tmp, ignore_errors=True)
+
 class Linear(unittest.TestCase):   # 2026-11-13 마루 감사: 비신뢰 HTML 정규식 2차시간 회귀
     N = 100000   # 최대 크기(4n). 판정 = n=N/4 → N 배율(tests/timing.py), 절대 초 아님
     def _t(self, f, unit, prefix=""):
@@ -842,7 +872,7 @@ class ApplyCLI(unittest.TestCase):
             self.assertEqual(m["blocks"][1]["rows"][1][1]["runs"], [{"text": "칸"}]); self.assertTrue(m["blocks"][0]["runs"][0]["sup"])
             with open(ops, "w") as f: json.dump([{"op": "table_delete_rows", "index": 0, "at": 0}], f)
             r = subprocess.run([sys.executable, os.path.join(APP, "hanword"), "--json", "apply", src, ops], capture_output=True, text=True, timeout=60)
-            self.assertEqual(r.returncode, 2); self.assertIn("표가 아님", r.stdout)
+            self.assertEqual(r.returncode, 2); self.assertIn("표가 아님", json.loads(r.stdout.strip().splitlines()[-1])["err"])   # --json = ASCII 이스케이프
 
 
 class OpsAudit(unittest.TestCase):   # Opus 감사(feat-ops) 재현 박제

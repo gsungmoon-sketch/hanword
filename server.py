@@ -10,6 +10,11 @@ import os, sys, json, re, posixpath, urllib.parse, subprocess, base64, threading
 import html as htmlmod, hashlib, ipaddress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+if __name__ == "__main__":   # 비 UTF-8 콘솔에서 로그 글자 때문에 죽지 않게(hanword_core.stdio_safe 와 같음)
+    for _s in (sys.stdout, sys.stderr):
+        if (getattr(_s, "encoding", None) or "").lower().replace("-", "") != "utf8" and hasattr(_s, "reconfigure"):
+            try: _s.reconfigure(errors="replace")
+            except Exception: pass
 if __name__ == "__main__":   # 플래그 → 환경변수(아래 모듈 상수 계산 전에): server.py --host H --port P --data DIR
     import argparse as _argparse
     _p = _argparse.ArgumentParser(description="hanword server (see README for WP_* environment variables)")

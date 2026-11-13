@@ -337,6 +337,9 @@ def run_local(cmd, label):
 
 
 def main():
+    for s_ in (sys.stdout, sys.stderr):   # Windows runner console = cp1252: echoing '→'/Hangul from the program must not crash us
+        if hasattr(s_, "reconfigure"):
+            s_.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("kind", choices=["windows", "macos", "linux", "pyz", "binary", "http"])
     ap.add_argument("artifact", nargs="?")
