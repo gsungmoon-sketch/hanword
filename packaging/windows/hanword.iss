@@ -1,7 +1,7 @@
 ﻿; hanword Windows installer (Inno Setup 6).
 ;
 ; Build (from the repository root, after `python packaging\build.py` and fetching WinSW):
-;   iscc /DAppVersion=0.1.0 packaging\windows\hanword.iss
+;   iscc /DAppVersion=0.1.1 packaging\windows\hanword.iss
 ; -> dist\hanword-<ver>-windows-x64-setup.exe
 ;
 ; What it does

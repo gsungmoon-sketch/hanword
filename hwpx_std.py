@@ -7,7 +7,7 @@
 import io, os, re, zipfile, base64, html as htmlmod
 import xml.etree.ElementTree as ET
 import pyexpat
-from hwpxconv import ListHTML, MAX_LIST_LEVEL   # 목록 수준 공용(hwpxconv 최상위는 표준 라이브러리만)
+from hwpxconv import ListHTML, MAX_LIST_LEVEL, zip_put   # 목록 수준 공용(hwpxconv 최상위는 표준 라이브러리만)
 
 APP = os.path.dirname(os.path.abspath(__file__))
 SKELETON = os.path.join(APP, "hwpx_skeleton.hwpx")
@@ -445,9 +445,9 @@ class _Writer:
         self.files.pop("Preview/PrvImage.png", None)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
-            z.writestr(zipfile.ZipInfo("mimetype", (1980, 1, 1, 0, 0, 0)), self.files.pop("mimetype"), compress_type=zipfile.ZIP_STORED)
+            zip_put(z, "mimetype", self.files.pop("mimetype"), zipfile.ZIP_STORED)
             for n in [n for n in self.order if n in self.files] + [n for n in self.files if n not in self.order]:
-                z.writestr(n, self.files[n], compress_type=zipfile.ZIP_STORED if n.startswith("BinData/") else zipfile.ZIP_DEFLATED)
+                zip_put(z, n, self.files[n], zipfile.ZIP_STORED if n.startswith("BinData/") else zipfile.ZIP_DEFLATED)
         return buf.getvalue()
 
 def write(blocks, meta, notes, page=None):

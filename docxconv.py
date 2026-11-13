@@ -6,7 +6,7 @@
 import io, re, zipfile, base64, posixpath, html as htmlmod
 import xml.etree.ElementTree as ET
 import pyexpat as _expat
-from hwpxconv import (P, _PP, ListHTML, MAX_LIST_LEVEL, cell_paras, _extract_meta, _extract_fnotes, _safe_link_url, HwpxInputError, check_zip_actual,
+from hwpxconv import (P, _PP, ListHTML, MAX_LIST_LEVEL, cell_paras, _extract_meta, _extract_fnotes, _safe_link_url, HwpxInputError, check_zip_actual, zip_put,
                       _imgsize, rgb2hex, _safecolor, _meta_page, _page_meta_attrs)
 
 class DocxInputError(HwpxInputError):
@@ -429,22 +429,22 @@ def html_to_docx(html, page=None):
     rels.append("</Relationships>")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", "".join(ct))
-        z.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="%s">'
+        zip_put(z, "[Content_Types].xml", "".join(ct))
+        zip_put(z, "_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="%s">'
                    '<Relationship Id="rId1" Type="%sofficeDocument" Target="word/document.xml"/>'
                    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
                    '<Relationship Id="rId3" Type="%sextended-properties" Target="docProps/app.xml"/></Relationships>' % (NS["rel"], RT, RT))
-        z.writestr("docProps/core.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        zip_put(z, "docProps/core.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
                    'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>한워드</dc:creator></cp:coreProperties>')
-        z.writestr("docProps/app.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Hanword</Application></Properties>')
-        z.writestr("word/document.xml", doc)
-        z.writestr("word/styles.xml", _STYLES)
-        z.writestr("word/settings.xml", settings)
-        if pkg.numdefs: z.writestr("word/numbering.xml", _numbering(pkg))
-        if pkg.notes: z.writestr("word/endnotes.xml", _endnotes(pkg))
-        for pth, xml in parts.items(): z.writestr(pth, xml)
-        z.writestr("word/_rels/document.xml.rels", "".join(rels))
-        for name, data in pkg.media: z.writestr("word/media/" + name, data)
+        zip_put(z, "docProps/app.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Hanword</Application></Properties>')
+        zip_put(z, "word/document.xml", doc)
+        zip_put(z, "word/styles.xml", _STYLES)
+        zip_put(z, "word/settings.xml", settings)
+        if pkg.numdefs: zip_put(z, "word/numbering.xml", _numbering(pkg))
+        if pkg.notes: zip_put(z, "word/endnotes.xml", _endnotes(pkg))
+        for pth, xml in parts.items(): zip_put(z, pth, xml)
+        zip_put(z, "word/_rels/document.xml.rels", "".join(rels))
+        for name, data in pkg.media: zip_put(z, "word/media/" + name, data)
     return buf.getvalue()
 
 # ───────────────────────── import: DOCX → HTML ─────────────────────────

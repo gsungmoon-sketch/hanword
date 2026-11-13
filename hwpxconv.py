@@ -55,6 +55,15 @@ _HWPX_MAXBYTES = int(os.environ.get("WP_HWPX_MAXBYTES", str(200 * 1024 * 1024)))
 _HWPX_MAXFILES = int(os.environ.get("WP_HWPX_MAXFILES", "2000"))                  # 엔트리 수 상한
 _HWPX_RATIO    = int(os.environ.get("WP_HWPX_RATIO", "200"))                      # 엔트리별 압축비 상한(폭탄)
 
+ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+def zip_put(z, name, data, compress=None):
+    """결정적 zip 항목 쓰기 — 어느 OS에서든 같은 바이트(고정 시각·create_system=3(Unix)·0644)."""
+    zi = zipfile.ZipInfo(name, ZIP_EPOCH)
+    zi.create_system = 3
+    zi.external_attr = 0o100644 << 16
+    zi.compress_type = zipfile.ZIP_DEFLATED if compress is None else compress
+    z.writestr(zi, data)
+
 def check_zip_actual(zf, maxbytes, ratio, err):
     """zip 선언 크기를 믿지 않고 실제로 풀어 세며 상한 검사. 압축 방식은 STORED/DEFLATED만(bzip2/lzma 거부)."""
     total = 0

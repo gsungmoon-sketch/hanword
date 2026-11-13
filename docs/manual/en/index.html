@@ -3,7 +3,7 @@
 <title>hanword User Manual</title><link rel="stylesheet" href="../manual.css"></head><body>
 <nav class="top"><div class="in"><a href="#top"><b>Contents</b></a><a href="../index.html">Language</a><span class="sp"></span><a href="../ko/index.html">한국어</a></div></nav>
 <div class="wrap" id="top"><h1>hanword User Manual</h1>
-<p>Version 0.1.0. How to install, use and run hanword, a web word processor for Korean documents that opens and saves HWPX, DOCX, HTML and text. If you are new, read chapters 1 to 4 in order. Every chapter prints cleanly (save as PDF).</p>
+<p>Version 0.1.1. How to install, use and run hanword, a web word processor for Korean documents that opens and saves HWPX, DOCX, HTML and text. If you are new, read chapters 1 to 4 in order. Every chapter prints cleanly (save as PDF).</p>
 <ol class="toc">
 <li><a href="#overview">Overview</a></li><li><a href="#install">Installation</a></li><li><a href="#firstrun">First run</a></li><li><a href="#editor">Using the editor</a></li><li><a href="#formats">File formats and limits</a></li><li><a href="#backup">Document storage and backup</a></li><li><a href="#trouble">Troubleshooting</a></li><li><a href="#security">Security</a></li><li><a href="#cli">CLI reference</a></li><li><a href="#config">Configuration reference</a></li><li><a href="#licence">Licences and third-party</a></li></ol>
 
@@ -30,10 +30,10 @@
 <pre><code># Linux (file and SHA256SUMS in the same folder)
 sha256sum -c SHA256SUMS --ignore-missing
 # macOS
-shasum -a 256 hanword-0.1.0-macos-arm64.pkg
+shasum -a 256 hanword-0.1.1-macos-arm64.pkg
 # Windows (PowerShell or Command Prompt)
-Get-FileHash .\hanword-0.1.0-windows-x64-setup.exe -Algorithm SHA256
-certutil -hashfile hanword-0.1.0-windows-x64-setup.exe SHA256</code></pre>
+Get-FileHash .\hanword-0.1.1-windows-x64-setup.exe -Algorithm SHA256
+certutil -hashfile hanword-0.1.1-windows-x64-setup.exe SHA256</code></pre>
 <p>The printed value must equal the matching line in <code>SHA256SUMS</code>.</p>
 
 <h3>2.2 Windows</h3>
@@ -49,15 +49,15 @@ certutil -hashfile hanword-0.1.0-windows-x64-setup.exe SHA256</code></pre>
 <li>Data: <code>/Library/Application Support/hanword</code> · Logs: <code>/Library/Logs/hanword</code>.</li>
 <li>Uninstall: <code>sudo /usr/local/hanword/uninstall.sh [--purge]</code> (<code>--purge</code> also deletes data).</li></ol>
 <h3>2.4 Linux (systemd)</h3>
-<pre><code>tar xzf hanword-0.1.0-linux-x64.tar.gz
-cd hanword-0.1.0-linux-x64
+<pre><code>tar xzf hanword-0.1.1-linux-x64.tar.gz
+cd hanword-0.1.1-linux-x64
 sudo ./install.sh [--port N]</code></pre>
 <ul><li>Installs to <code>/opt/hanword</code>, command <code>/usr/local/bin/hanword</code>, data <code>/var/lib/hanword</code> (user <code>hanword</code>), unit <code>hanword.service</code>.</li>
 <li>Status: <code>systemctl status hanword</code> · Logs: <code>journalctl -u hanword</code></li>
 <li>Uninstall: <code>sudo /opt/hanword/uninstall.sh [--purge]</code></li></ul>
 <h3>2.5 Any OS: .pyz or source</h3>
 <pre><code># single file (.pyz)
-python hanword-0.1.0.pyz serve
+python hanword-0.1.1.pyz serve
 
 # from a source checkout
 git clone https://github.com/gsungmoon-sketch/hanword
@@ -285,4 +285,4 @@ fonttools ttLib.woff2 compress original.ttf</code></pre>
 <li>Bundled JavaScript: html2canvas and jsPDF (see the repository NOTICE and file headers for their licences).</li>
 <li>Optional components are not bundled and keep their own licences. Note that <b>pyhwp is AGPL-3.0</b>; it is used only if you install it yourself.</li>
 <li>Hamchorom (Hancom) and UnBatang (GPL) are not included.</li></ul>
-<footer>hanword 0.1.0 manual · MIT licence · Screen names may differ slightly between versions.</footer></div></body></html>
+<footer>hanword 0.1.1 manual · MIT licence · Screen names may differ slightly between versions.</footer></div></body></html>

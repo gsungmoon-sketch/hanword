@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Smoke test for built hanword packages (used by the release workflow).
 
-    python packaging/smoke_test.py linux   dist/hanword-0.1.0-linux-x64.tar.gz
-    python packaging/smoke_test.py macos   dist/hanword-0.1.0-macos-arm64.pkg
-    python packaging/smoke_test.py windows dist/hanword-0.1.0-windows-x64-setup.exe
-    python packaging/smoke_test.py pyz     dist/hanword-0.1.0.pyz        # runs it with this Python
+    python packaging/smoke_test.py linux   dist/hanword-0.1.1-linux-x64.tar.gz
+    python packaging/smoke_test.py macos   dist/hanword-0.1.1-macos-arm64.pkg
+    python packaging/smoke_test.py windows dist/hanword-0.1.1-windows-x64-setup.exe
+    python packaging/smoke_test.py pyz     dist/hanword-0.1.1.pyz        # runs it with this Python
     python packaging/smoke_test.py binary  dist/hanword/hanword           # the bare PyInstaller binary
     python packaging/smoke_test.py http    --port 8088                    # HTTP checks only, running server
 

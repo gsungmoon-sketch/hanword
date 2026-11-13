@@ -253,7 +253,7 @@ def make_lists_docx():
              ("word/document.xml", doc), ("word/numbering.xml", numbering)]
     b = io.BytesIO()
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
-        for name, data in files: z.writestr(zipfile.ZipInfo(name, (2026, 11, 13, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
+        for name, data in files: hwpxconv.zip_put(z, name, data)   # 결정적(OS 무관 create_system=3)
     return b.getvalue()
 LISTS_DOCX_SIG = [("p", None, 0, "Lists"), ("li", "number", 0, "one"), ("li", "number", 1, "one-a"), ("li", "bullet", 2, "dash"),
                   ("li", "number", 1, "one-b"), ("li", "number", 0, "two"), ("p", None, 0, "between"), ("li", "bullet", 0, "bul"),
@@ -585,6 +585,19 @@ class LegacyDoc(unittest.TestCase):
         fs = struct.unpack_from("<I", d, 0x4C)[0]; off = 512 + fs * c.ss + st * 4
         struct.pack_into("<I", d, off, st)
         with self.assertRaises(core.InputError): docconv.doc_to_html(bytes(d))
+
+class ZipDeterminism(unittest.TestCase):   # 2026-11-13 Windows CI: create_system 0x00 vs 0x03 차이
+    def test_create_system_unix(self):
+        import zipfile, io, docxconv
+        h = "<p>a</p><table><tr><td>b</td></tr></table>"
+        for data in (docxconv.html_to_docx(h), hwpxconv.html_to_hwpx(h), make_lists_docx()):
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                for i in z.infolist():
+                    self.assertEqual(i.create_system, 3, i.filename); self.assertEqual(i.date_time, (1980, 1, 1, 0, 0, 0), i.filename)
+    def test_deterministic_bytes(self):
+        import docxconv
+        h = "<p>a</p>"
+        self.assertEqual(docxconv.html_to_docx(h), docxconv.html_to_docx(h)); self.assertEqual(hwpxconv.html_to_hwpx(h), hwpxconv.html_to_hwpx(h))
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--make-corpus"]:

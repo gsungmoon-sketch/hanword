@@ -1,35 +1,14 @@
 #!/usr/bin/env python3
 # 한워드(hanword) 서버 — 브라우저 WYSIWYG 문서 편집기 서빙 + 문서 저장/불러오기 + HWPX/DOCX/PDF 변환.
 #   표준 라이브러리만으로 동작(HWPX·DOCX·TXT·HTML). 선택 기능은 README "Optional extras" 참고.
-#   설정(환경변수): WP_HOST(기본 127.0.0.1) WP_PORT(기본 8088) WP_DOCS(문서 폴더) WP_DEBUG(기본 0)
-#                  WP_PUBLIC=1(무상태 공개 변환 모드) WP_SITE_URL(공개 사이트 주소, robots/sitemap/canonical)
-#                  WP_BOARD_ENABLE=1(익명 게시판) WP_ALLOW_REMOTE=1(로컬 모드에서 비루프백 바인딩 허용)
-import os, sys, json, re, posixpath, urllib.parse, subprocess, base64, threading, importlib, secrets, tempfile, shutil
+#   설정(환경변수, 일부는 플래그 --host/--port/--data):
+#     WP_HOST(기본 127.0.0.1) WP_PORT(기본 8088) WP_DOCS(문서 폴더, 기본 ~/hanword-documents) WP_FONT WP_DEBUG(기본 0)
+#     WP_PUBLIC=1(무상태 공개 변환 모드) WP_PUBLIC_HOST(허용 Origin 호스트, 쉼표 목록) WP_SITE_URL(robots/sitemap/canonical)
+#     WP_BOARD_ENABLE=1(익명 게시판) WP_ALLOW_REMOTE=1(로컬 모드 비루프백 바인딩 허용) WP_ALLOWED_HOSTS(추가 Host 허용)
+#     WP_MAX_BODY(POST 본문 상한, 기본 64MB) WP_REMOTE_SSH(선택: ssh 원격 변환 폴백 호스트) PRN_BIN/QUITNAG_BIN(기기 전용, 기본 꺼짐)
+import os, sys, json, re, posixpath, urllib.parse, subprocess, base64, threading, importlib, secrets, tempfile, shutil, errno, shlex
 import html as htmlmod, hashlib, ipaddress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-# 원격 변환 폴백은 공개판에 없음(모든 변환은 이 프로세스 안에서 수행).
-def remote_conv(mode, data):
-    return False, b"", "원격 변환 없음"
-
-def remote_pdf(html_bytes):
-    return False, b"", "벡터 PDF 변환기 미설정(WP_PDF_LOCAL=1 + node/playwright 필요)"
-
-def local_pdf(html_bytes):
-    """원격 자체에서 node(htmlpdf.js)를 직접 실행 → A4 PDF(ssh 우회). (ok, pdf, err)"""
-    try:
-        env = {**os.environ}
-        if NODE_PATH: env["NODE_PATH"] = NODE_PATH
-        p = subprocess.run(["node", HTMLPDF], input=html_bytes, capture_output=True, timeout=90, env=env)
-        if p.returncode == 0 and p.stdout[:4] == b"%PDF":
-            return True, p.stdout, ""
-        return False, b"", (p.stderr.decode("utf-8", "replace")[-400:] or "PDF 변환 실패")
-    except Exception as e:
-        return False, b"", "로컬 PDF 오류: %s" % e
-
-def to_pdf(html_bytes):
-    """PDF 변환: 로컬(원격) 우선 설정이면 로컬, 아니면 원격 ssh."""
-    return local_pdf(html_bytes) if PDF_LOCAL else remote_pdf(html_bytes)
 
 if __name__ == "__main__":   # 플래그 → 환경변수(아래 모듈 상수 계산 전에): server.py --host H --port P --data DIR
     import argparse as _argparse
@@ -41,18 +20,84 @@ if __name__ == "__main__":   # 플래그 → 환경변수(아래 모듈 상수 �
     for _k, _v in (("WP_HOST", _a.host), ("WP_PORT", _a.port), ("WP_DOCS", _a.data)):
         if _v is not None: os.environ[_k] = str(_v)
 
-APP   = os.path.dirname(os.path.abspath(__file__))            # 스크립트 위치(이식성: 원격에서도 동작)
-DOCS  = os.path.realpath(os.environ.get("WP_DOCS", os.path.join(os.path.expanduser("~"), "hanword-documents")))   # 절대경로화: 상대 WP_DOCS면 docpath의 commonpath 검증이 ValueError→저장 500(2026-07-06 e2e에서 발견)
-FONT  = os.environ.get("WP_FONT", os.path.join(APP, "font", "NotoSansKR-Regular.otf"))
-FONTDIR = os.environ.get("WP_FONTDIR", os.path.join(APP, "font"))   # 추가 웹폰트(woff2/ttf) 디렉토리(원격=~/hanword/font)
+# ── 선택: ssh 원격 변환 폴백 ─────────────────────────────────────────────
+#   WP_REMOTE_SSH=<ssh 대상>일 때만 사용. 기본=원격 없음(모든 변환은 이 프로세스 안).
+#   원격 쪽에는 WP_REMOTE_APP(기본 ~/hanword)에 hwpxconv.py·htmlpdf.js 가 있어야 함.
+REMOTE_SSH  = os.environ.get("WP_REMOTE_SSH", "").strip()
+REMOTE_APP  = os.environ.get("WP_REMOTE_APP", "~/hanword")
+def _rq(path):   # 원격 셸용 경로 인용(~/ 접두는 $HOME 으로 펼침)
+    return '"$HOME"/' + shlex.quote(path[2:]) if path.startswith("~/") else shlex.quote(path)
+REMOTE_HOME = os.environ.get("WP_REMOTE_HOME", "")   # ssh 키를 다른 HOME에서 찾아야 할 때(기기 등)
+
+def _remote_run(cmd, data, timeout):
+    env = {**os.environ}
+    if REMOTE_HOME: env["HOME"] = REMOTE_HOME
+    return subprocess.run(["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", "--", REMOTE_SSH, cmd],
+                          input=data, capture_output=True, timeout=timeout, env=env)
+
+def remote_conv(mode, data):
+    """원격 HWPX 변환. mode='export'(html→hwpx) | 'import'(hwpx→html). (ok, out, err)"""
+    if not REMOTE_SSH or mode not in ("export", "import"):
+        return False, b"", "원격 변환 없음"
+    try:
+        p = _remote_run("python3 %s %s" % (_rq(REMOTE_APP.rstrip("/") + "/hwpxconv.py"), mode), data, 40)
+        if p.returncode == 0 and p.stdout:
+            return True, p.stdout, ""
+        return False, b"", (p.stderr.decode("utf-8", "replace")[-400:] or "원격 변환 실패")
+    except Exception as e:
+        return False, b"", "원격 연결 실패: %s" % e
+
+def remote_pdf(html_bytes):
+    """원격 node(htmlpdf.js) → A4 PDF. (ok, pdf, err)"""
+    if not REMOTE_SSH:
+        return False, b"", "벡터 PDF 변환기 미설정(WP_PDF_LOCAL=1 + node/playwright 필요)"
+    try:
+        p = _remote_run("node %s" % _rq(REMOTE_APP.rstrip("/") + "/htmlpdf.js"), html_bytes, 90)
+        if p.returncode == 0 and p.stdout[:4] == b"%PDF":
+            return True, p.stdout, ""
+        return False, b"", (p.stderr.decode("utf-8", "replace")[-400:] or "PDF 변환 실패")
+    except Exception as e:
+        return False, b"", "원격 연결 실패: %s" % e
+
+def local_pdf(html_bytes):
+    """이 컴퓨터에서 node(htmlpdf.js)를 직접 실행 → A4 PDF. (ok, pdf, err)"""
+    try:
+        env = {**os.environ}
+        if NODE_PATH: env["NODE_PATH"] = NODE_PATH
+        if not env.get("WP_FONT_URL"):   # htmlpdf.js 가 폰트를 이 서버에서 받도록(포트 설정 반영)
+            _fh = "127.0.0.1" if HOST in ("0.0.0.0", "", "localhost") else ("::1" if HOST == "::" else HOST)
+            env["WP_FONT_URL"] = "http://%s:%d/font" % ("[%s]" % _fh if ":" in _fh else _fh, PORT)
+        p = subprocess.run(["node", HTMLPDF], input=html_bytes, capture_output=True, timeout=90, env=env)
+        if p.returncode == 0 and p.stdout[:4] == b"%PDF":
+            return True, p.stdout, ""
+        return False, b"", (p.stderr.decode("utf-8", "replace")[-400:] or "PDF 변환 실패")
+    except Exception as e:
+        return False, b"", "로컬 PDF 오류: %s" % e
+
+def to_pdf(html_bytes):
+    """PDF 변환: WP_PDF_LOCAL=1 이면 로컬 node, 아니면 원격(WP_REMOTE_SSH, 미설정이면 실패 안내)."""
+    return local_pdf(html_bytes) if PDF_LOCAL else remote_pdf(html_bytes)
+
+APP   = os.path.dirname(os.path.abspath(__file__))            # 스크립트 위치
+DOCS  = os.path.realpath(os.path.expanduser(os.environ.get("WP_DOCS") or os.path.join("~", "hanword-documents")))   # 절대경로화: 상대 WP_DOCS면 docpath의 commonpath 검증이 ValueError→저장 500(2026-07-06 e2e에서 발견)
+FONT  = os.environ.get("WP_FONT") or os.path.join(APP, "font", "NotoSansKR.ttf")
+FONTDIR = os.environ.get("WP_FONTDIR", os.path.join(APP, "font"))   # 추가 웹폰트(woff2/ttf) 디렉토리
 FONT_CT = {"woff2":"font/woff2","woff":"font/woff","ttf":"font/ttf","otf":"font/otf","ttc":"font/collection"}
-PORT  = int(os.environ.get("WP_PORT", "8088"))
-HOST  = os.environ.get("WP_HOST", "127.0.0.1")
+def _env_int(k, default, lo, hi):
+    v = (os.environ.get(k) or "").strip() or str(default)
+    try:
+        n = int(v)
+        if not lo <= n <= hi: raise ValueError
+        return n
+    except ValueError:
+        sys.stderr.write("hanword: bad %s=%r (expected an integer %d..%d)\n" % (k, v, lo, hi)); sys.exit(2)
+PORT  = _env_int("WP_PORT", 8088, 0, 65535)
+HOST  = (os.environ.get("WP_HOST") or "127.0.0.1").strip()
 ALLOW_REMOTE = os.environ.get("WP_ALLOW_REMOTE", "0") != "0"   # 로컬 모드 비루프백 바인딩 허용(신뢰 LAN 전용)
 _HOST_OK = {"127.0.0.1", "localhost", "::1"} | {h.strip().lower() for h in os.environ.get("WP_ALLOWED_HOSTS", "").split(",") if h.strip()}
 SITE_URL = os.environ.get("WP_SITE_URL", "").strip().rstrip("/")   # 공개 사이트 주소(robots/sitemap/canonical), 없으면 생략
-MAX_BODY = int(os.environ.get("WP_MAX_BODY", str(64 * 1024 * 1024)))   # POST 본문 상한(바이트)
-BOARD_ON = os.environ.get("WP_BOARD_ENABLE", "0") != "0"           # 익명 게시판(기본 꺼짐)
+BOARD_ON = os.environ.get("WP_BOARD_ENABLE", "0") != "0"           # 익명 게시판(기본 꺼짐 → /api/board/* 404)
+MAX_BODY = _env_int("WP_MAX_BODY", 64 * 1024 * 1024, 0, 1 << 40)   # POST 본문 상한(바이트, 이미지 포함 문서 여유)
 def _hw_version():
     try:
         import hanword_version; return hanword_version.__version__
@@ -60,12 +105,12 @@ def _hw_version():
 os.makedirs(DOCS, exist_ok=True)
 
 # ── 공개(멀티유저) 모드 ──────────────────────────────────────────────
-#   WP_PUBLIC=1 이면 docs.example.com 같은 원격 서비스로 동작:
+#   WP_PUBLIC=1 이면 인터넷 공개 서비스로 동작:
 #   서버측 공유 문서 저장/목록을 막고, 무상태 변환 엔드포인트(업로드→html, html→hwpx/pdf)만 노출.
 #   문서 보존은 전적으로 사용자 브라우저의 업로드(load)·다운로드(save)로 처리(개인정보·동시성 안전).
 PUBLIC      = os.environ.get("WP_PUBLIC", "0") != "0"
-PUBLIC_HOST = os.environ.get("WP_PUBLIC_HOST", "")            # 허용 Origin 호스트(예: docs.example.com)
-PDF_LOCAL   = os.environ.get("WP_PDF_LOCAL", "0") != "0"      # 원격에서 node를 로컬 실행(ssh 우회)
+PUBLIC_HOST = os.environ.get("WP_PUBLIC_HOST", "")            # 허용 Origin 호스트, 쉼표 목록(예: docs.example.com,www.example.com)
+PDF_LOCAL   = os.environ.get("WP_PDF_LOCAL", "0") != "0"      # 벡터 PDF: 이 컴퓨터의 node(htmlpdf.js) 실행
 HTMLPDF     = os.environ.get("WP_HTMLPDF", os.path.join(APP, "htmlpdf.js"))
 NODE_PATH   = os.environ.get("WP_NODE_PATH", "")
 
@@ -74,7 +119,7 @@ CONV_MAX    = max(1, int(os.environ.get("WP_CONV_MAX", "2")))     # 동시 변�
 _CONV_SEM   = threading.BoundedSemaphore(CONV_MAX)
 _CONV_DELAY = float(os.environ.get("WP_CONV_TESTDELAY", "0"))     # 테스트 전용: 슬롯 점유 지연(기본 0=무동작)
 # 문서 외 응답(JSON/JS/CSS/폰트)용 기본 CSP. index.html은 nonce 포함 문서 CSP로 별도 지정.
-CSP_DEFAULT = "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+CSP_DEFAULT = "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 _hx = [None]; _hxlock = threading.Lock()
 def _get_hx():
@@ -111,26 +156,37 @@ class _PageTL(threading.local):   # 요청별 용지 설정(docx 내보내기) �
 _PAGE = _PageTL()
 
 def conv(mode, data):
-    """HWPX/DOCX 변환: 로컬(오프라인) 우선, 실패 시 원격 폴백(hwpx만 — docx는 로컬 전용)."""
+    """HWPX/DOCX 변환: 로컬(오프라인) 우선, 실패 시 원격 폴백(WP_REMOTE_SSH 설정 시, hwpx만 — docx는 로컬 전용)."""
     ok, out, err = local_conv(mode, data)
     if ok: return ok, out, err
-    if err.startswith("INPUT:") or mode == "export-docx":    # 사용자 입력 문제(악성/손상 hwpx)는 원격 ssh 폴백 생략(자원 증폭 차단)
+    if err.startswith("INPUT:") or mode == "export-docx" or not REMOTE_SSH:   # 사용자 입력 문제(악성/손상 hwpx)는 원격 폴백 생략(자원 증폭 차단)
         return False, b"", err
     ok2, out2, err2 = remote_conv(mode, data)
     if ok2: return ok2, out2, err2
     return False, b"", "로컬:%s / 원격:%s" % (err, err2)
 
+def _bad_leaf(name):
+    """파일 이름 하나(경로 아님)로 쓸 수 없는 이름? — 경로 구분자(/ \\), 드라이브·스트림(:), ., .., 숨김, 제어문자."""
+    return (not isinstance(name, str) or not name or name in (".", "..") or name.startswith(".")
+            or any(c in name for c in "/\\:\0") or any(ord(c) < 32 for c in name))
+
+def _leaf_path(base, name):
+    """base 폴더 바로 아래의 name 경로, 아니면 None(realpath 의 부모가 base 와 같아야 함 — 심링크 탈출 차단)."""
+    if _bad_leaf(name): return None
+    rb = os.path.realpath(base); fp = os.path.join(rb, name)
+    if os.path.dirname(os.path.realpath(fp)) != rb: return None
+    return fp
+
 IMAGES = os.path.join(DOCS, "images"); os.makedirs(IMAGES, exist_ok=True)
 IMG_EXT = {"png":"png","jpg":"jpeg","jpeg":"jpeg","gif":"gif","webp":"webp","bmp":"bmp"}
 def image_datauri(name):
-    name = (name or "").replace("/", "")
-    fp = os.path.join(IMAGES, name)
-    if not os.path.isfile(fp) or os.path.commonpath([os.path.realpath(fp), IMAGES]) != IMAGES:
+    fp = _leaf_path(IMAGES, name)
+    if not fp or not os.path.isfile(fp):
         return None
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
     mime = IMG_EXT.get(ext, "png"); tok = "jpg" if mime == "jpeg" else mime
     try:   # 800px 이내로 축소(문서 크기 절감)
-        r = subprocess.run(["magick", fp, "-resize", "800x800>", tok + ":-"],
+        r = subprocess.run(["magick"] + IM_LIMITS + [fp, "-resize", "800x800>", tok + ":-"],
                            capture_output=True, timeout=20)
         data = r.stdout if (r.returncode == 0 and r.stdout) else open(fp, "rb").read()
     except Exception:
@@ -141,9 +197,8 @@ MEDIA = os.path.join(DOCS, "media"); os.makedirs(MEDIA, exist_ok=True)
 MED_EXT = {"mp4":"video/mp4","webm":"video/webm","ogv":"video/ogg","mov":"video/mp4","m4v":"video/mp4",
            "mp3":"audio/mpeg","wav":"audio/wav","m4a":"audio/mp4","oga":"audio/ogg","ogg":"audio/ogg","aac":"audio/aac","flac":"audio/flac"}
 def media_datauri(name):   # 문서/media 폴더의 영상·소리를 data URI로(문서=미디어, 표준 HTML 자족)
-    name = (name or "").replace("/", "")
-    fp = os.path.join(MEDIA, name)
-    if not os.path.isfile(fp) or os.path.commonpath([os.path.realpath(fp), MEDIA]) != MEDIA:
+    fp = _leaf_path(MEDIA, name)
+    if not fp or not os.path.isfile(fp):
         return None, None
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     mime = MED_EXT.get(ext)
@@ -156,9 +211,8 @@ def media_datauri(name):   # 문서/media 폴더의 영상·소리를 data URI�
     kind = "audio" if mime.startswith("audio") else "video"
     return "data:%s;base64,%s" % (mime, base64.b64encode(data).decode()), kind
 def media_ref(name):   # 큰 영상=파일 참조(문서엔 경로만·가벼움, 스킴이 /media/로 스트리밍). (상대경로, kind)
-    name = (name or "").replace("/", "")
-    fp = os.path.join(MEDIA, name)
-    if not os.path.isfile(fp) or os.path.commonpath([os.path.realpath(fp), MEDIA]) != MEDIA:
+    fp = _leaf_path(MEDIA, name)
+    if not fp or not os.path.isfile(fp):
         return None, None
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     mime = MED_EXT.get(ext)
@@ -168,7 +222,7 @@ def media_ref(name):   # 큰 영상=파일 참조(문서엔 경로만·가벼움
 
 # ── 디버그/헤드리스 테스트 브리지 (127.0.0.1 전용, WP_DEBUG=0 이면 비활성) ──
 import itertools, time
-DEBUG  = (not PUBLIC) and os.environ.get("WP_DEBUG", "0") != "0"  # 공개모드는 디버그 브리지 강제 차단
+DEBUG  = (not PUBLIC) and os.environ.get("WP_DEBUG", "0") != "0"  # 기본 꺼짐. 공개모드는 디버그 브리지 강제 차단
 DBGLOG = os.path.join(DOCS, ".wp-debug.log")
 _dlock = threading.Lock()
 _state = {}            # 페이지가 보고한 최신 에디터 상태
@@ -184,16 +238,82 @@ def safe_name(n):
 
 def docpath(name, ext=".html"):
     p = os.path.join(DOCS, safe_name(name) + ext)
-    # DOCS 밖으로 못 나가게 검증
-    if os.path.commonpath([os.path.realpath(p), DOCS]) != DOCS:
+    # DOCS 바로 아래만(심링크 탈출 포함 차단)
+    if os.path.dirname(os.path.realpath(p)) != DOCS:
         raise ValueError("bad path")
     return p
 
+def atomic_write(path, data):
+    """원자 저장: 같은 폴더에 고유 임시파일 → flush+fsync → os.replace. 실패 시 기존 파일은 그대로."""
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path)[:40] + ".", suffix=".tmp", dir=d)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data); f.flush(); os.fsync(f.fileno())
+        try: mode = os.stat(path).st_mode & 0o777
+        except OSError: mode = 0o644
+        try: os.chmod(tmp, mode)
+        except OSError: pass
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+    _fsync_dir(d)
+
+def _fsync_dir(d):   # 이름 변경을 디스크에 확정(POSIX; Windows 등은 무시)
+    try:
+        dfd = os.open(d, os.O_RDONLY)
+        try: os.fsync(dfd)
+        finally: os.close(dfd)
+    except OSError:
+        pass
+
+_LINK_UNSUPPORTED = {errno.EPERM, errno.EMLINK, errno.ENOSYS, errno.EXDEV,
+                     getattr(errno, "ENOTSUP", -1), getattr(errno, "EOPNOTSUPP", -1)}
+
+def rename_noclobber(src, dst):
+    """src → dst 이름변경, dst 가 이미 있으면 덮어쓰지 않고 False. 경합 안전: 하드링크(dst 가 있으면 실패) 후 src 해제.
+       하드링크 불가 파일시스템이면 O_EXCL 로 자리를 선점한 뒤 os.replace."""
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        if _case_only(src, dst):   # 대소문자만 바꾸는 이름변경(대소문자 무시 파일시스템)
+            os.replace(src, dst); return True
+        return False
+    except OSError as e:
+        if e.errno not in _LINK_UNSUPPORTED: raise   # 원본 없음 등은 그대로 오류(빈 dst 를 남기지 않음)
+        if not os.path.isfile(src): raise FileNotFoundError(errno.ENOENT, "no such file", src)
+        try: fd = os.open(dst, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError: return False
+        os.close(fd)
+        try:
+            os.replace(src, dst)
+        except BaseException:
+            try: os.unlink(dst)
+            except OSError: pass
+            raise
+        _fsync_dir(os.path.dirname(dst) or ".")
+        return True
+    os.unlink(src)
+    _fsync_dir(os.path.dirname(dst) or ".")
+    return True
+
+def _case_only(src, dst):
+    """dst 가 src 와 같은 파일이고 이름이 대소문자만 다른가(대소문자 무시 파일시스템의 이름변경)."""
+    if src == dst or src.lower() != dst.lower(): return False
+    try: return os.path.samefile(src, dst)
+    except OSError: return False
+
 # ── #28 인쇄(프린터)·로컬 래스터 PDF (docs/print-spec.md) ──────────────────
-PRN_BIN  = os.environ.get("PRN_BIN", "")     # printman CLI(rc0=성공/rc2=미등록, -x=취소). e2e는 스텁 주입
-QUITNAG_BIN = os.environ.get("QUITNAG_BIN", "")  # #29 기기 종료 확인창(wp-quitnag 0 = Home 닫기 동일). env 자체보강이라 서버 env 무관. e2e는 스텁 주입
+PRN_BIN  = os.environ.get("PRN_BIN", "")        # 인쇄 CLI(rc0=성공/rc2=미등록, -x=취소). 기본 ""=인쇄 꺼짐. e2e는 스텁 주입
+QUITNAG_BIN = os.environ.get("QUITNAG_BIN", "")  # #29 기기 종료 확인창 명령(인자 "0"). 기본 ""=꺼짐. e2e는 스텁 주입
 PRINTDIR = os.path.join(DOCS, "print")          # 기기판 산출물 폴더(파일매니저 문서폴더에서 열람·재인쇄)
 MAX_RASTER_PAGES = 300
+MAX_PIXELS = 40_000_000                         # 쪽 PNG 한 장 픽셀 상한(IHDR w*h, 40MP) — 픽셀 폭탄 차단
+MAX_PIXELS_TOTAL = 400_000_000                  # 한 요청의 쪽 픽셀 합 상한(400MP)
+IM_LIMITS = ["-limit", "memory", "256MiB", "-limit", "map", "512MiB", "-limit", "area", "128MP",
+             "-limit", "disk", "512MiB", "-limit", "list-length", str(MAX_RASTER_PAGES), "-limit", "time", "110"]
 
 def _asset_ver():
     """정적 자산(.js/.css) mtime 최대값 → 캐시버스팅 버전. 코드 갱신·재배포 시 자동 변경 → 브라우저·CF 엣지 캐시 무효화."""
@@ -204,7 +324,7 @@ def _asset_ver():
 
 _im = [None]
 def _get_im():
-    """ImageMagick 실행기: v7 'magick'(기기) 우선, 구판 'convert'(IM6) 폴백. 1회 탐지 캐시."""
+    """ImageMagick 실행기: v7 'magick' 우선, 구판 'convert'(IM6) 폴백. 1회 탐지 캐시."""
     if _im[0] is None:
         for c in (("magick",) if os.name == "nt" else ("magick", "convert")):   # Windows convert.exe = 디스크 변환 도구
             if shutil.which(c): _im[0] = c; break
@@ -221,7 +341,7 @@ def pages_to_pdf(pages):
     if not im: return False, b"", "ImageMagick 없음"
     tmpd = tempfile.mkdtemp(prefix="wpprint-")
     try:
-        files, width = [], 0
+        files, width, total = [], 0, 0
         for i, du in enumerate(pages):
             if not isinstance(du, str) or not du.startswith("data:image/png;base64,"):
                 return False, b"", "PNG dataURL 아님(%d쪽)" % (i + 1)
@@ -229,16 +349,18 @@ def pages_to_pdf(pages):
             except Exception: return False, b"", "base64 오류(%d쪽)" % (i + 1)
             if raw[:8] != b"\x89PNG\r\n\x1a\n":
                 return False, b"", "PNG 아님(%d쪽)" % (i + 1)
-            if len(raw) < 24: return False, b"", "PNG 아님(%d쪽)" % (i + 1)
+            if len(raw) < 24 or raw[12:16] != b"IHDR": return False, b"", "PNG 아님(%d쪽)" % (i + 1)
             _w, _h = int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")   # IHDR
-            if _w * _h > 40000000: return False, b"", "쪽 이미지가 너무 큼(%d쪽)" % (i + 1)   # 픽셀 폭탄 차단
+            if _w * _h > MAX_PIXELS: return False, b"", "쪽 이미지가 너무 큼(%d쪽)" % (i + 1)   # 픽셀 폭탄 차단
+            total += _w * _h
+            if total > MAX_PIXELS_TOTAL: return False, b"", "쪽 이미지 합계가 너무 큼(%d쪽까지)" % (i + 1)
             if not width: width = _w
             fp = os.path.join(tmpd, "p%04d.png" % i)
             with open(fp, "wb") as f: f.write(raw)
             files.append(fp)
         dpi = max(72, round(width / 8.27)) if width else 200
         out = os.path.join(tmpd, "out.pdf")
-        p = subprocess.run([im, "-limit", "memory", "256MiB", "-limit", "map", "512MiB", "-limit", "area", "128MP"] + files + ["-units", "PixelsPerInch", "-density", str(dpi), out],
+        p = subprocess.run([im] + IM_LIMITS + files + ["-units", "PixelsPerInch", "-density", str(dpi), out],
                            capture_output=True, timeout=120)
         if p.returncode != 0 or not os.path.isfile(out):
             return False, b"", "magick 실패: " + p.stderr.decode("utf-8", "replace")[-300:]
@@ -255,9 +377,7 @@ def save_print_pdf(name, pdf):
     os.makedirs(PRINTDIR, exist_ok=True)
     fn = "%s-%s.pdf" % (safe_name(name), time.strftime("%y%m%d-%H%M%S"))
     fp = os.path.join(PRINTDIR, fn)
-    tmp = fp + ".tmp"
-    with open(tmp, "wb") as f: f.write(pdf)
-    os.replace(tmp, fp)
+    atomic_write(fp, pdf)
     return fn, fp
 
 def run_prn(args, timeout):
@@ -324,13 +444,10 @@ def board_read_all():
     return posts
 
 def _board_write_all(posts):
+    """호출부가 _board_lock 을 잡은 상태에서 부른다."""
     d = os.path.dirname(BOARD_FILE)
     if d: os.makedirs(d, exist_ok=True)
-    tmp = BOARD_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        for p in posts:
-            f.write(json.dumps(p, ensure_ascii=False) + "\n")
-    os.replace(tmp, BOARD_FILE)
+    atomic_write(BOARD_FILE, "".join(json.dumps(p, ensure_ascii=False) + "\n" for p in posts).encode("utf-8"))
 
 def _pub_post(p):   # 목록용 공개 필드(본문·해시 제외)
     return {"id": p.get("id"), "title": p.get("title", ""), "tag": p.get("tag", "기타"),
@@ -515,14 +632,14 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self._bad_host():
-            return self._send(421, 'misdirected request', 'text/plain')
+            return self._send(421, "misdirected request", "text/plain")
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         path = u.path
         if path == "/healthz":               # 상태 확인(설치 스모크·모니터링)
             return self._send(200, json.dumps({"ok": True, "app": "hanword", "version": _hw_version(),
                                                "public": PUBLIC}))
-        if path == "/robots.txt":            # SEO: WP_SITE_URL 이 있으면 사이트맵 고지
+        if path == "/robots.txt":            # SEO: 크롤러 허용, WP_SITE_URL 이 있으면 사이트맵 고지
             _rb = "User-agent: *\nAllow: /\nDisallow: /api/\n"
             if SITE_URL: _rb += "\nSitemap: %s/sitemap.xml\n" % SITE_URL
             return self._send(200, _rb, "text/plain; charset=utf-8")
@@ -555,8 +672,10 @@ class H(BaseHTTPRequestHandler):
             html = html.replace("<script", '<script nonce="%s"' % nonce)   # 기존 태그(외부·인라인) 전부 nonce 부착
             _ver = _asset_ver()   # 자산 mtime 버전 → 코드 갱신 시 URL 변경으로 캐시(브라우저·CF 엣지) 무효화
             html = re.sub(r'((?:src|href)="/(?:wp-[a-z]+\.js|editor\.css))"', r'\1?v=' + _ver + '"', html)
-            if SITE_URL:
-                html = html.replace("</head>", '<link rel="canonical" href="%s/">\n</head>' % htmlmod.escape(SITE_URL, quote=True), 1)
+            if SITE_URL:   # 정규 주소(검색엔진): WP_SITE_URL 설정 시에만 — 기존 canonical 은 교체, 없으면 추가
+                _cl = '<link rel="canonical" href="%s/">' % htmlmod.escape(SITE_URL, quote=True)
+                html, _n = re.subn(r'<link rel="canonical"[^>]*>', lambda _m: _cl, html, count=1)
+                if not _n: html = html.replace("</head>", _cl + "\n</head>", 1)
             if PUBLIC:   # 공개모드: 플래그 주입 + wp-public.js 로드(메뉴를 업로드/다운로드로 전환)
                 inj = ('<script nonce="%s">window.WP_PUBLIC=true;</script>\n'
                        '<script nonce="%s" defer src="/wp-public.js?v=%s"></script>\n') % (nonce, nonce, _ver)
@@ -665,12 +784,14 @@ class H(BaseHTTPRequestHandler):
             name = (q.get("name") or [""])[0]
             try:
                 with open(docpath(name), "r", encoding="utf-8") as f: html = f.read()
-            except OSError:
+            except (OSError, ValueError):
                 html = ""
             return self._send(200, json.dumps({"name": safe_name(name), "html": html},
                                               ensure_ascii=False))
         if path == "/debug.js":
             return self._file(os.path.join(APP, "debug.js"), "application/javascript; charset=utf-8")
+        if path.startswith("/api/debug/") and self._bad_fetch_site():   # 다른 사이트 페이지가 디버그 브리지를 읽지 못하게
+            return self._send(403, json.dumps({"ok": False, "err": "cross-site"}))
         if DEBUG and path == "/api/debug/state":
             with _dlock: return self._send(200, json.dumps(_state, ensure_ascii=False))
         if DEBUG and path == "/api/debug/cmd":          # 페이지가 대기명령 1개 dequeue
@@ -690,12 +811,13 @@ class H(BaseHTTPRequestHandler):
         return self._send(404, "not found", "text/plain")
 
     def _bad_host(self):
-        # DNS 리바인딩 차단: 로컬 모드에서는 Host 헤더가 루프백/허용 목록일 때만 응답.
+        # DNS 리바인딩 차단: 로컬 모드에서는 Host 헤더가 루프백/바인드 주소/허용 목록(WP_ALLOWED_HOSTS)일 때만 응답.
         # WP_ALLOW_REMOTE=1 이면 IP 리터럴(리바인딩 불가)도 허용.
         if PUBLIC: return False
         h = (self.headers.get("Host") or "").strip().lower()
         if h.startswith("["): h = h[1:].split("]", 1)[0]
         elif h.count(":") == 1: h = h.rsplit(":", 1)[0]
+        h = h.rstrip(".")
         if h in _HOST_OK: return False
         if ALLOW_REMOTE and h:
             try:
@@ -706,30 +828,43 @@ class H(BaseHTTPRequestHandler):
 
     def _bad_origin(self):
         # CSRF 차단: 브라우저의 교차 사이트 표식 거부, Origin 이 있으면 같은 출처(host:port = Host 헤더)
-        # 또는 공개 허용 호스트(WP_PUBLIC_HOST)만. Origin 없음 = 도구/동일출처 단순요청 → 허용.
-        if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site": return True
+        # 또는 공개 허용 호스트(WP_PUBLIC_HOST 쉼표 목록)만. Origin 없음 = 도구/동일출처 단순요청 → 허용.
+        # 로컬 모드: same-origin/none(주소창·북마크) 외 Sec-Fetch-Site(same-site 포함) 전부 거부.
+        if self._bad_fetch_site(): return True
         o = self.headers.get("Origin")
         if not o: return False
         try:
-            pu = urllib.parse.urlparse(o); host = (pu.hostname or "").lower(); netloc = (pu.netloc or "").lower()
+            pu = urllib.parse.urlparse(o.strip()); host = (pu.hostname or "").lower(); netloc = (pu.netloc or "").lower()
+            scheme = (pu.scheme or "").lower(); port = pu.port
         except Exception:
             return True
-        if not host or "@" in netloc: return True
+        if not host or "@" in netloc or scheme not in ("http", "https"): return True
         if netloc == (self.headers.get("Host") or "").strip().lower(): return False
-        allow = {x.strip().lower() for x in (PUBLIC_HOST or "").split(",") if x.strip()}
-        return host not in allow
+        for ent in (x.strip().lower().rstrip("/") for x in (PUBLIC_HOST or "").split(",")):
+            if not ent: continue
+            if "://" in ent:   # 항목에 scheme(포트)까지 적었으면 그대로 비교
+                if ent == "%s://%s" % (scheme, netloc): return False
+            elif scheme == "https" and host == ent and port in (None, 443):   # 호스트만 적은 항목 = https 기본 포트만
+                return False
+        return True
+
+    def _bad_fetch_site(self):
+        sfs = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if not sfs: return False
+        if sfs == "cross-site": return True
+        return (not PUBLIC) and sfs not in ("same-origin", "none")
 
     def do_POST(self):
         if self._bad_host():
-            return self._send(421, 'misdirected request', 'text/plain')
+            return self._send(421, "misdirected request", "text/plain")
         u = urllib.parse.urlparse(self.path)
         if self._bad_origin():
             return self._send(403, json.dumps({"ok": False, "err": "cross-origin 거부"}))
-        try: ln = int(self.headers.get("Content-Length", "0") or "0")
-        except ValueError: ln = -1
+        _cl = (self.headers.get("Content-Length") or "0").strip()
+        ln = int(_cl) if re.fullmatch(r"[0-9]{1,15}", _cl) else -1   # 숫자만(부호·공백·16진 등 거부)
         if ln < 0:                                   # 비정상 길이(음수/비숫자): 예전엔 read(-1)=EOF까지 대기·ValueError 크래시
             return self._send(400, json.dumps({"ok": False, "err": "bad length"}))
-        if ln > MAX_BODY:                    # 본문 상한 64MB(이미지 포함 문서 여유)
+        if ln > MAX_BODY:                            # 본문 상한(WP_MAX_BODY, 기본 64MB)
             return self._send(413, json.dumps({"ok": False, "err": "too large"}))
         raw = self.rfile.read(ln) if ln else b""
         # ── 공개(무상태) 변환 엔드포인트: 디스크 저장 없이 바이트를 그대로 응답(다운로드) ──
@@ -827,10 +962,10 @@ class H(BaseHTTPRequestHandler):
             if not ok:
                 return self._send(400, json.dumps({"ok": False, "err": res}, ensure_ascii=False))
             return self._send(200, json.dumps({"ok": True, "id": res}, ensure_ascii=False))
-        if (PUBLIC or not PRN_BIN) and u.path in ("/api/print", "/api/print-cancel"):   # #28 공개판: 인쇄는 명시적 403(스펙 §1c 게이트)
-            return self._send(403, json.dumps({"ok": False, "err": "공개 서비스에서는 인쇄를 지원하지 않습니다"}, ensure_ascii=False))
-        if (PUBLIC or not QUITNAG_BIN) and u.path == "/api/quit":     # #29 공개판: 종료는 명시적 403(클라는 종전 토스트 경로)
-            return self._send(403, json.dumps({"ok": False, "err": "공개 서비스에서는 종료를 지원하지 않습니다"}, ensure_ascii=False))
+        if (PUBLIC or not PRN_BIN) and u.path in ("/api/print", "/api/print-cancel"):   # #28 공개판·인쇄 미설정: 명시적 403(스펙 §1c 게이트)
+            return self._send(403, json.dumps({"ok": False, "err": "공개 서비스에서는 인쇄를 지원하지 않습니다" if PUBLIC else "인쇄 명령이 설정되지 않았습니다(PRN_BIN)"}, ensure_ascii=False))
+        if (PUBLIC or not QUITNAG_BIN) and u.path == "/api/quit":     # #29 공개판·종료 명령 미설정: 명시적 403(클라는 종전 토스트 경로)
+            return self._send(403, json.dumps({"ok": False, "err": "공개 서비스에서는 종료를 지원하지 않습니다" if PUBLIC else "종료 명령이 설정되지 않았습니다(QUITNAG_BIN)"}, ensure_ascii=False))
         if PUBLIC:   # 공개모드: 서버측 공유 저장/삭제/디스크변환 전면 차단(무상태 변환만 허용)
             return self._send(404, json.dumps({"ok": False, "err": "disabled in public mode"}))
         try: data = json.loads(raw.decode("utf-8") or "{}")
@@ -842,9 +977,7 @@ class H(BaseHTTPRequestHandler):
             if not isinstance(html, str):
                 return self._send(400, json.dumps({"ok": False, "err": "html must be a string"}))
             try:
-                _dp = docpath(name); _tp = _dp + ".tmp"
-                with open(_tp, "w", encoding="utf-8") as f: f.write(html)
-                os.replace(_tp, _dp)   # 원자 저장: 실패해도 기존 문서 보존
+                atomic_write(docpath(name), html.encode("utf-8", "replace"))   # 실패해도 기존 문서 보존
                 return self._send(200, json.dumps({"ok": True, "name": name}, ensure_ascii=False))
             except (OSError, ValueError) as e:
                 return self._send(500, json.dumps({"ok": False, "err": str(e)}))
@@ -862,10 +995,13 @@ class H(BaseHTTPRequestHandler):
                 key = _b64.urlsafe_b64encode(hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 200000, dklen=32))
                 tok = Fernet(key).encrypt(payload)
                 hd = os.path.join(DOCS, ".hist"); os.makedirs(hd, exist_ok=True)
-                tmp = os.path.join(hd, name + ".hist.tmp"); fin = os.path.join(hd, name + ".hist")
-                with open(tmp, "wb") as f: f.write(b"WPH1" + salt + tok)
-                if os.path.exists(fin): os.replace(fin, fin + ".bak")   # 한 세대 보관 — 암호 분실 상태로 덮어써도 직전 역사 회수 여지
-                os.replace(tmp, fin)
+                fin = os.path.join(hd, name + ".hist"); bak = fin + ".bak"
+                if os.path.isfile(fin):   # 한 세대 보관 — 암호 분실 상태로 덮어써도 직전 역사 회수 여지(새 파일 쓰기 전 보관, 원본은 그대로)
+                    try: os.unlink(bak)
+                    except FileNotFoundError: pass
+                    try: os.link(fin, bak)
+                    except OSError: shutil.copy2(fin, bak)
+                atomic_write(fin, b"WPH1" + salt + tok)
                 return self._send(200, json.dumps({"ok": True}))
             except Exception as e:
                 return self._send(200, json.dumps({"ok": False, "err": str(e)}, ensure_ascii=False))
@@ -891,47 +1027,46 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/delete":
             name = safe_name(data.get("name"))
             try: os.remove(docpath(name))
-            except OSError: pass
+            except (OSError, ValueError): pass
             return self._send(200, json.dumps({"ok": True}))
         if u.path == "/api/rename":
             old = safe_name(data.get("old")); new = safe_name(data.get("new"))
             try:
-                if os.path.exists(docpath(new)) and docpath(new) != docpath(old):
-                    return self._send(200, json.dumps({"ok": False, "err": "같은 이름이 이미 있습니다"}, ensure_ascii=False))
-                if os.path.exists(docpath(old)): os.replace(docpath(old), docpath(new))
+                po, pn = docpath(old), docpath(new)
+                if os.path.exists(po) and po != pn:
+                    if not rename_noclobber(po, pn):
+                        return self._send(200, json.dumps({"ok": False, "err": "같은 이름이 이미 있습니다"}, ensure_ascii=False))
                 return self._send(200, json.dumps({"ok": True, "name": new}, ensure_ascii=False))
             except (OSError, ValueError) as e:
                 return self._send(500, json.dumps({"ok": False, "err": str(e)}))
         if u.path == "/api/media/rename":   # 미디어 파일 이름변경(파일핸들 편집, 2026-07-19). 문서/media 안에서만
-            old = posixpath.basename(data.get("old") or ""); new = posixpath.basename(data.get("new") or "")
-            _rawn = str(data.get("old") or "") + str(data.get("new") or "")
-            if not old or not new or new.startswith(".") or "\\" in _rawn or ":" in _rawn or "/" in _rawn:
+            old = data.get("old") or ""; new = data.get("new") or ""
+            if _bad_leaf(old) or _bad_leaf(new):   # 경로 구분자(/ \\)·드라이브(:)·..·숨김 이름 거부(basename 으로 고쳐 쓰지 않음)
                 return self._send(200, json.dumps({"ok": False, "err": "이름이 올바르지 않습니다"}, ensure_ascii=False))
             oe = old.rsplit(".", 1)[-1].lower() if "." in old else ""
             if "." not in new: new = new + "." + oe          # 확장자 생략=원본 확장자 유지
             if new.rsplit(".", 1)[-1].lower() not in MED_EXT:
                 return self._send(200, json.dumps({"ok": False, "err": "지원 형식이 아닙니다"}, ensure_ascii=False))
-            srcp = os.path.join(MEDIA, old); dstp = os.path.join(MEDIA, new)
+            srcp = _leaf_path(MEDIA, old); dstp = _leaf_path(MEDIA, new)
+            if not dstp:
+                return self._send(200, json.dumps({"ok": False, "err": "이름이 올바르지 않습니다"}, ensure_ascii=False))
             try:
-                rm = os.path.realpath(MEDIA)
-                if not os.path.isfile(srcp) or os.path.commonpath([os.path.realpath(srcp), rm]) != rm:
+                if not srcp or not os.path.isfile(srcp):
                     return self._send(200, json.dumps({"ok": False, "err": "원본 파일이 없습니다"}, ensure_ascii=False))
-                if os.path.exists(dstp):
+                if (os.path.lexists(dstp) and not _case_only(srcp, dstp)) or not rename_noclobber(srcp, dstp):
                     return self._send(200, json.dumps({"ok": False, "err": "같은 이름이 이미 있습니다"}, ensure_ascii=False))
-                if os.path.dirname(os.path.realpath(dstp)) != rm:
-                    return self._send(200, json.dumps({"ok": False, "err": "이름이 올바르지 않습니다"}, ensure_ascii=False))
-                os.rename(srcp, dstp)
                 return self._send(200, json.dumps({"ok": True, "name": new}, ensure_ascii=False))
             except OSError as e:
                 return self._send(500, json.dumps({"ok": False, "err": str(e)}))
-        if u.path == "/api/export/hwpx":     # 현재 문서(HTML) → .hwpx (원격 변환)
+        if u.path == "/api/export/hwpx":     # 현재 문서(HTML) → .hwpx
             name = safe_name(data.get("name")); html = data.get("html", "")
+            if not isinstance(html, str): return self._send(400, json.dumps({"ok": False, "err": "html must be a string"}))
             if not _CONV_SEM.acquire(blocking=False): return self._busy()
             try: ok, out, err = conv("export", html.encode("utf-8", "replace"))
             finally: _CONV_SEM.release()
             if not ok: return self._fail_conv(err)
             try:
-                with open(docpath(name, ".hwpx"), "wb") as f: f.write(out)
+                atomic_write(docpath(name, ".hwpx"), out)
                 return self._send(200, json.dumps({"ok": True, "file": name + ".hwpx", "size": len(out)}, ensure_ascii=False))
             except (OSError, ValueError) as e:
                 return self._send(500, json.dumps({"ok": False, "err": str(e)}))
@@ -982,18 +1117,19 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps({"ok": False, "err": "인쇄 명령(prn) 없음"}, ensure_ascii=False))
             except subprocess.TimeoutExpired:
                 return self._send(200, json.dumps({"ok": False, "err": "취소 응답 시간 초과"}, ensure_ascii=False))
-        if u.path == "/api/export/pdf":      # 기존 벡터 경로(HTML→Chromium) — 원격/Playwright 가용 환경용 호환 유지
+        if u.path == "/api/export/pdf":      # 벡터 경로(HTML→Chromium) — node/Playwright 가용 환경용
             name = safe_name(data.get("name")); html = data.get("html", "")
+            if not isinstance(html, str): return self._send(400, json.dumps({"ok": False, "err": "html must be a string"}))
             if not _CONV_SEM.acquire(blocking=False): return self._busy()
             try: ok, out, err = to_pdf(html.encode("utf-8", "replace"))
             finally: _CONV_SEM.release()
             if not ok: return self._fail_conv(err)
             try:
-                with open(docpath(name, ".pdf"), "wb") as f: f.write(out)
+                atomic_write(docpath(name, ".pdf"), out)
                 return self._send(200, json.dumps({"ok": True, "file": name + ".pdf", "size": len(out)}, ensure_ascii=False))
             except (OSError, ValueError) as e:
                 return self._send(500, json.dumps({"ok": False, "err": str(e)}))
-        if u.path == "/api/import/hwpx":     # .hwpx/.hwp 파일 → HTML (원격 변환)
+        if u.path == "/api/import/hwpx":     # 문서 폴더의 .hwpx/.hwp/.docx 파일 → HTML
             fn = posixpath.basename((data.get("name") or "").replace("\\", "/"))   # 경로조작 차단(basename만)
             fp = os.path.join(DOCS, fn)
             try: inside = os.path.commonpath([os.path.realpath(fp), DOCS]) == DOCS
@@ -1034,15 +1170,15 @@ def _prewarm():
     try: _get_hx()   # lxml+hwpx 사전 로드 → 첫 HWPX 변환도 즉시(콜드 2.3s 제거)
     except Exception: pass
 
-
 def _is_loopback(h):
     if h == "localhost": return True
     try: return ipaddress.ip_address(h).is_loopback
     except ValueError: return False
 
 def serve(host=None, port=None):
-    """서버 실행. 로컬(저장 가능) 모드는 인증이 없으므로 비루프백 바인딩은 WP_ALLOW_REMOTE=1 일 때만."""
+    """서버 실행. 로컬(저장 가능) 모드는 인증이 없으므로 비루프백 바인딩은 WP_PUBLIC=1 또는 WP_ALLOW_REMOTE=1 일 때만."""
     host = host or HOST; port = int(port or PORT)
+    if host.startswith("[") and host.endswith("]"): host = host[1:-1]
     if not _is_loopback(host) and not (PUBLIC or ALLOW_REMOTE):
         sys.stderr.write("hanword: refusing to listen on %s — the local (save/load) mode has no login.\n"
                          "  Use 127.0.0.1, or set WP_PUBLIC=1 (stateless converter) or WP_ALLOW_REMOTE=1 (trusted LAN only).\n" % host)

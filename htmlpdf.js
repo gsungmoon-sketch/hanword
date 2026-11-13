@@ -1,21 +1,22 @@
 // htmlpdf.js — 에디터 본문 HTML(stdin) → A4 PDF(stdout). Playwright Chromium page.pdf().
 //   에디터와 같은 스타일(한글폰트·제목크기·표)로 렌더 → WYSIWYG PDF.
-//   ⚠️폰트는 한워드 서비스(127.0.0.1:8088)의 /font 를 http로 로드(Chromium은 file:// 차단, 그 폰트엔 CORS 필요).
+//   ⚠️폰트는 한워드 서버의 /font 를 http로 로드(Chromium은 file:// 차단, 그 폰트엔 CORS 필요).
+//     주소 = WP_FONT_URL(서버가 자식 프로세스에 넘김) > http://127.0.0.1:$WP_PORT/font > 기본 포트 8088.
 //   사용: WP_PDF_LOCAL=1 WP_HTMLPDF=<경로>/htmlpdf.js (node + playwright 필요, 선택 기능)
 const { chromium } = require('playwright');
 const fs = require('fs');
 
 (async () => {
-  const FBASE = process.env.WP_FONT_URL || 'http://127.0.0.1:8088/font';
-  const ff  = (fam, file, w) => `@font-face{font-family:'${fam}';${w?'font-weight:'+w+';':''}src:url('${FBASE}/${file}') format('${/\.otf$/.test(file)?'opentype':/\.ttf$/.test(file)?'truetype':'woff2'}');}`;
+  const FBASE = process.env.WP_FONT_URL || ('http://127.0.0.1:' + (process.env.WP_PORT || '8088') + '/font');
+  const ff  = (fam, file, w) => `@font-face{font-family:'${fam}';${w?'font-weight:'+w+';':''}src:url('${FBASE}/${file}') format('woff2');}`;
   // NotoKR=풀 NotoSansKR.ttf(원문자 ①·화살표 →·한자까지 커버 → 모든 스택 끝 만능 폴백)
   const FONTFACE = [
-    `@font-face{font-family:'NotoKR';src:url('${FBASE}/NotoSansKR-Regular.otf') format('opentype');}`,
-    ff('Noto Sans KR','NotoSansKR-Regular.otf',400),   ff('Noto Sans KR','NotoSansKR-Bold.otf',700),
+    `@font-face{font-family:'NotoKR';src:url('${FBASE}/NotoSansKR.ttf') format('truetype');}`,
+    ff('Noto Sans KR','NotoSansKR-400.woff2',400),   ff('Noto Sans KR','NotoSansKR-700.woff2',700),
     ff('Noto Serif KR','NotoSerifKR-400.woff2',400), ff('Noto Serif KR','NotoSerifKR-700.woff2',700),
     ff('Pretendard','Pretendard-400.woff2',400),     ff('Pretendard','Pretendard-700.woff2',700),
-    ff('NanumGothic','NanumGothic-Regular.ttf',400),   ff('NanumGothic','NanumGothic-Bold.ttf',700),
-    ff('NanumMyeongjo','NanumMyeongjo-Regular.ttf',400),ff('NanumMyeongjo','NanumMyeongjo-Bold.ttf',700),
+    ff('NanumGothic','NanumGothic-400.woff2',400),   ff('NanumGothic','NanumGothic-700.woff2',700),
+    ff('NanumMyeongjo','NanumMyeongjo-400.woff2',400),ff('NanumMyeongjo','NanumMyeongjo-700.woff2',700),
     ff('D2Coding','D2Coding-400.woff2',400),         ff('D2Coding','D2Coding-700.woff2',700),
     // KTUG 배포: 함초롬체LVT(자유배포)·은바탕(GPL) — 한자/옛한글 서브셋 제외(→NotoKR 폴백)
     ff('함초롬바탕','Hamchorom-Batang-400.woff2',400), ff('함초롬바탕','Hamchorom-Batang-700.woff2',700),
@@ -23,9 +24,9 @@ const fs = require('fs');
     ff('UnBatang','UnBatang-400.woff2',400),         ff('UnBatang','UnBatang-700.woff2',700),
     // 독점 폰트명 별칭 → 가장 가까운 오픈 폰트(이름은 HWPX에 원본 보존, 한글에선 정품)
     ff('맑은 고딕','Pretendard-400.woff2',400),       ff('맑은 고딕','Pretendard-700.woff2',700),
-    ff('굴림','NotoSansKR-Regular.otf'),  ff('돋움','NotoSansKR-Regular.otf'),  ff('HY견고딕','NotoSansKR-Bold.otf'),
+    ff('굴림','NotoSansKR-400.woff2'),  ff('돋움','NotoSansKR-400.woff2'),  ff('HY견고딕','NotoSansKR-700.woff2'),
     ff('바탕','NotoSerifKR-400.woff2'), ff('궁서','NotoSerifKR-400.woff2'),
-    ff('나눔고딕','NanumGothic-Regular.ttf'), ff('나눔명조','NanumMyeongjo-Regular.ttf'),
+    ff('나눔고딕','NanumGothic-400.woff2'), ff('나눔명조','NanumMyeongjo-400.woff2'),
   ].join('');
 
   let body = fs.readFileSync(0, 'utf-8');                   // stdin = 본문 HTML
@@ -72,8 +73,8 @@ const fs = require('fs');
     const { PDFDocument, rgb } = require('pdf-lib');
     const fontkit = require('@pdf-lib/fontkit');
     const path = require('path');
-    const cands = [process.env.WP_FONT, path.join(__dirname, 'font', 'NotoSansKR-Regular.otf'),
-                   path.join(process.env.HOME || '', 'wp', 'font', 'NotoSansKR-Regular.otf')].filter(Boolean);
+    const cands = [process.env.WP_FONT, path.join(__dirname, 'font', 'NotoSansKR.ttf'),
+                   path.join(process.env.HOME || '', 'wp', 'font', 'NotoSansKR.ttf')].filter(Boolean);
     let fontBytes = null;
     for (const p of cands) { try { fontBytes = fs.readFileSync(p); break; } catch (e) {} }
     if (!fontBytes) throw new Error('스탬핑 폰트 없음: ' + cands.join(', '));
@@ -128,12 +129,12 @@ img{max-width:100%;}
 </style></head><body>${body}</body></html>`;
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   try {
-    const page = await browser.newPage({ javaScriptEnabled: false });
+    const page = await browser.newPage({ javaScriptEnabled: false });   // 신뢰불가 문서의 스크립트 실행 차단
     // SSRF/렌더지연 차단: 신뢰불가 문서가 참조하는 외부 리소스는 로드하지 않음 — 폰트 서버(FBASE)만 허용
-    const fontOrigin = new URL(FBASE).origin;
+    const fontPrefix = FBASE.replace(/\/+$/, '') + '/';   // 폰트 경로(/font/)만 허용 — 같은 서버의 다른 경로(API 등)도 차단
     await page.route('**/*', (route) => {
       const u = route.request().url();
-      if (u.startsWith(fontOrigin + '/') || u.startsWith('about:')) return route.continue();
+      if (u.startsWith(fontPrefix) || u.startsWith('about:')) return route.continue();
       return route.abort();
     });
     // networkidle은 외부 리소스 hang에 취약 → load + document.fonts.ready로 대체

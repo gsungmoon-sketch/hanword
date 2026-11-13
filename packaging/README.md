@@ -47,7 +47,7 @@ Uninstall: `sudo /opt/hanword/uninstall.sh [--purge]`.
 ## macOS .pkg
 
 ```sh
-python packaging/build.py && packaging/macos/build_pkg.sh 0.1.0 dist
+python packaging/build.py && packaging/macos/build_pkg.sh 0.1.1 dist
 ```
 
 Installs `/usr/local/hanword/`, `/usr/local/bin/hanword`, the LaunchDaemon
@@ -62,7 +62,7 @@ to `productbuild` and notarise with `xcrun notarytool`.
 1. `python packaging\build.py`
 2. Put WinSW v2.12.0 `WinSW.NET461.exe` and its `LICENSE.txt` in `build\winsw\` (the workflow
    downloads them and checks the SHA-256 values pinned in `release.yml`).
-3. `iscc /DAppVersion=0.1.0 packaging\windows\hanword.iss` → `dist\hanword-0.1.0-windows-x64-setup.exe`
+3. `iscc /DAppVersion=0.1.1 packaging\windows\hanword.iss` → `dist\hanword-0.1.1-windows-x64-setup.exe`
 
 Installs `C:\Program Files\hanword\`, the service `hanword` (NT AUTHORITY\LocalService), documents in
 `%ProgramData%\hanword\documents` (SYSTEM / Administrators / LOCAL SERVICE only) and a Start-menu
