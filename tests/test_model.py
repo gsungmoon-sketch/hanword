@@ -3,7 +3,8 @@
    python-hwpx/lxml 없는 환경(-s -I, Maru Alpine)에서도 전부 통과해야 함(.hwp만 pyhwp 필요 시 생략)."""
 import os, sys, re, time, json, glob, unittest, copy
 HERE = os.path.dirname(os.path.abspath(__file__)); APP = os.path.dirname(HERE)
-sys.path.insert(0, APP)
+sys.path.insert(0, APP); sys.path.insert(0, HERE)
+import timing as tm
 import hanword_core as core
 import hanword_model as hm
 from hanword_model import ModelError
@@ -134,14 +135,14 @@ class AuditRegress(unittest.TestCase):   # Opus 감사(2026-11-13) 재현 박제
     def test_work_limits(self):
         import time
         big = {"version": 1, "blocks": [{"type": "p", "runs": [dict({"text": "x" * 1000}, **({"bold": True} if i % 2 == 0 else {})) for i in range(4000)]}]}
-        t = time.time(); core.apply_ops(big, [{"op": "insert_text", "pos": [0, 5], "text": "y"}]); self.assertLess(time.time() - t, 3)
+        t = time.time(); core.apply_ops(big, [{"op": "insert_text", "pos": [0, 5], "text": "y"}]); self.assertLess(time.time() - t, tm.limit(3))
         self.bad(lambda: core.apply_ops({"version": 1, "blocks": [{"type": "p", "runs": [{"text": "a"}]}]},
                                         [{"op": "insert_text", "pos": [0, 0], "text": "x" * 100000}] * 700))
         many = {"version": 1, "blocks": [{"type": "p", "runs": [{"text": "a"}]} for _ in range(5000)]}
         t = time.time()
         with self.assertRaises(ModelError):
             core.apply_ops(many, [{"op": "set_style", "start": [0, 0], "end": [4999, 1], "attrs": {"bold": True}}] * 1000)
-        self.assertLess(time.time() - t, 20)
+        self.assertLess(time.time() - t, tm.limit(20))
     def test_border_tiny(self):
         m = {"version": 1, "meta": {}, "notes": {}, "blocks": [{"type": "table", "rows": [[{"colspan": 1, "rowspan": 1, "runs": [], "borders": {"top": ["solid", 0, None]}}]]}]}
         self.assertEqual(core.model(core.render(m))["blocks"][0]["rows"][0][0]["borders"]["top"][1], 0)
@@ -156,22 +157,23 @@ class Stdlib(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-500:]); self.assertEqual(r.stdout.split(), ["docx", "hwpx", "a", "b"])
 
 class Linear(unittest.TestCase):   # 2026-11-13 마루 감사: 비신뢰 HTML 정규식 2차시간 회귀
-    N = 100000
-    def _t(self, f, s):
-        import time; t0 = time.time(); f(s); dt = time.time() - t0
-        self.assertLess(dt, 1.0, "%.2fs" % dt)
-    def test_strip_meta(self): self._t(hm._strip_meta, '<div id="wpmeta"' * self.N)
-    def test_extract_meta(self): self._t(hwpxconv._extract_meta, '<div id="wpmeta"' * self.N)
-    def test_fnotes_open(self): self._t(hwpxconv._extract_fnotes, '<div class="fnotes">' * self.N)
-    def test_fnotes_p(self): self._t(hwpxconv._extract_fnotes, '<div class="fnotes">' + '<p ' * self.N)
-    def test_fnotes_p2(self): self._t(hwpxconv._extract_fnotes, '<div class="fnotes">' + '<p>x</p >' * self.N)
-    def test_check_lt(self): self._t(core.check_html, '<' * self.N)
-    def test_check_img(self): self._t(core.check_html, '<img ' * self.N)
-    def test_check_table(self): self._t(core.check_html, '<table' * self.N)
+    N = 100000   # 최대 크기(4n). 판정 = n=N/4 → N 배율(tests/timing.py), 절대 초 아님
+    def _t(self, f, unit, prefix=""):
+        tm.assert_linear(self, f, lambda k: prefix + unit * k, self.N // 4, cap=1.0)
+    def test_strip_meta(self): self._t(hm._strip_meta, '<div id="wpmeta"')
+    def test_extract_meta(self): self._t(hwpxconv._extract_meta, '<div id="wpmeta"')
+    def test_fnotes_open(self): self._t(hwpxconv._extract_fnotes, '<div class="fnotes">')
+    def test_fnotes_p(self): self._t(hwpxconv._extract_fnotes, '<p ', '<div class="fnotes">')
+    def test_fnotes_p2(self): self._t(hwpxconv._extract_fnotes, '<p>x</p >', '<div class="fnotes">')
+    def test_check_lt(self): self._t(core.check_html, '<')
+    def test_check_img(self): self._t(core.check_html, '<img ')
+    def test_check_table(self): self._t(core.check_html, '<table')
     def test_eof_tail_old_parser(self):   # Windows CI(3.10.11·3.11.9 = CVE-2025-6069 이전 html.parser): close() 때 닫히지 않은 구성마다 끝까지 재탐색
         from hanword_htmlparse import eof_safe
-        for s in ('<img ' * self.N, '<table' * self.N, '<p>a</p>' + '<!-- >' * self.N, '<![CDATA[ ]>' * self.N, '<p>x</p><img src="a"'):
-            t0 = time.time(); r = eof_safe(s); self.assertLess(time.time() - t0, 1.0)
+        for u, pre in (('<img ', ''), ('<table', ''), ('<!-- >', '<p>a</p>'), ('<![CDATA[ ]>', '')):
+            tm.assert_linear(self, eof_safe, lambda k: pre + u * k, self.N // 4)
+        for s in ('<img ' * 1000, '<table' * 1000, '<p>a</p>' + '<!-- >' * 1000, '<![CDATA[ ]>' * 1000, '<p>x</p><img src="a"'):
+            r = eof_safe(s)
             self.assertNotIn("<", r[r.rfind(">") + 1:])                    # 마지막 '>' 뒤 여는 구성 없음
             last = max((m.start() for m in re.finditer(r"--\s*>", r)), default=-1)
             self.assertTrue(all(m.start() + 4 <= last for m in re.finditer("<!--", r)))   # 모든 <!-- 는 뒤에 닫는 짝
@@ -405,18 +407,15 @@ class CellParas(unittest.TestCase):   # 2026-11-13 표 셀 여러 문단(model·
         finally: hwpxconv.HWPX_ENGINE = e
         self.assertEqual(self._rt(h), self._rt(self.HTML))
     def test_linear(self):
-        import time
-        for s in ("<table><tr><td>" + "a<br>" * 100000 + "</td></tr></table>", "<table><tr><td>" + "<p>a</p>" * 100000 + "</td></tr></table>",
-                  "<table><tr><td>" + "<div>" * 50000 + "a" + "</div>" * 50000 + "</td></tr></table>"):
-            t0 = time.time(); m = core.model(s); dt = time.time() - t0
-            self.assertLess(dt, 5.0, "%.2fs" % dt); hm.validate(m)
+        T = lambda inner: "<table><tr><td>" + inner + "</td></tr></table>"
+        for mk in (lambda k: T("a<br>" * k), lambda k: T("<p>a</p>" * k), lambda k: T("<div>" * (k // 2) + "a" + "</div>" * (k // 2))):
+            tm.assert_linear(self, core.model, mk, 25000, cap=5.0, reps=1)
+            hm.validate(core.model(mk(1000)))
     def test_deep_inline_linear(self):   # 감사: merged()가 텍스트 노드×인라인 깊이(84s 재현) → 단계 캐시로 선형
         import time
-        s = "<table><tr><td>" + "<span>" * 20000 + "x<br>" * 20000 + "</td></tr></table>"
-        t0 = time.time(); m = core.model(s); dt = time.time() - t0
-        self.assertLess(dt, 2.0, "%.2fs" % dt); hm.validate(m)
-        s2 = "<p>" + "<b><i>" * 20000 + "y " * 20000 + "</p>"
-        t0 = time.time(); core.model(s2); self.assertLess(time.time() - t0, 2.0)
+        tm.assert_linear(self, core.model, lambda k: "<table><tr><td>" + "<span>" * k + "x<br>" * k + "</td></tr></table>", 5000, cap=2.0, reps=1)
+        tm.assert_linear(self, core.model, lambda k: "<p>" + "<b><i>" * k + "y " * k + "</p>", 5000, cap=2.0, reps=1)
+        hm.validate(core.model("<table><tr><td>" + "<span>" * 200 + "x<br>" * 200 + "</td></tr></table>"))
     def test_converter_para_cap(self):   # 감사: 변환기 경로도 셀 문단 수 상한(1M <br> → 1M w:p/hp:p 차단)
         import zipfile, io
         n = hwpxconv.MAX_CPARAS + 500
@@ -575,7 +574,7 @@ class LegacyDoc(unittest.TestCase):
         import time
         t = time.time(); docconv._clean("\x13" * 60 + "x" * 400000 + "\x15" * 60)
         docconv._clean(("\x13" * 100 + "a\x14b" + "\x15" * 100) * 3000)
-        self.assertLess(time.time() - t, 1.5)
+        self.assertLess(time.time() - t, tm.limit(1.5))
         self.assertEqual(docconv._clean("a\x13 HYPERLINK x\x14결과\x15b\r"), ["a결과b"])
         self.assertEqual(docconv._clean("\x13" * 70 + "c\x14r" + "\x15" * 70 + "z\r"), ["z"])   # 깊이 64 초과분도 짝 맞춤
     def test_fat_is_array(self):
@@ -854,13 +853,13 @@ class OpsAudit(unittest.TestCase):   # Opus 감사(feat-ops) 재현 박제
         self.assertEqual(len(m["blocks"][0]["rows"][0][0]["paras"]), 10000)
         m2 = hm.apply(m, [{"op": "insert_text", "pos": [0, 0, 0, 5000, 0], "text": "가"}] * 2000)
         self.assertEqual(hm.block_text(m2["blocks"][0]["rows"][0][0]["paras"][5000]), "가" * 2000)
-        self.assertLess(time.time() - t, 3.0)
+        self.assertLess(time.time() - t, tm.limit(3.0))
     def test_cell_at_cached(self):   # MED: 칸 연산마다 격자 재구성 → 5000×6 표 6s
         import time
         d = _doc(_grid(5000, 6, fill=False)); t = time.time()
         m = hm.apply(d, [{"op": "insert_text", "pos": [0, 4999, 5, 0, 0], "text": "x"}] * 3000
                         + [{"op": "table_cell", "index": 0, "r": 4999, "c": 0, "bg": "#FFFFFF"}] * 1000)
-        self.assertLess(time.time() - t, 3.0)
+        self.assertLess(time.time() - t, tm.limit(3.0))
         self.assertEqual(m["blocks"][0]["rows"][4999][5]["runs"], [{"text": "x" * 3000}])
         m = hm.apply(d, [{"op": "table_delete_rows", "index": 0, "at": 0, "n": 4998},   # 구조 연산 뒤 캐시 무효
                          {"op": "insert_text", "pos": [0, 1, 0, 0, 0], "text": "y"}])

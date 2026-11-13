@@ -30,6 +30,10 @@ import zipfile
 from pathlib import Path
 
 HOST = "127.0.0.1"
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packaging"))
+import manifest  # noqa: E402
+FONT_URL = __import__("re").compile(r"""url\(\s*['"]?(?:\./|/)?font/([^'")\s?#]+)""")
 MARK = "hanword-smoke 한글 문단 ✓"
 SAMPLE = ("<p>%s</p><p><b>굵게</b> 그리고 <i>기울임</i></p>"
           "<table><tr><td>가</td><td>나</td></tr><tr><td>1</td><td>2</td></tr></table>") % MARK
@@ -114,10 +118,14 @@ def check_http(port):
     """Static files + save/load + HWPX export/import over HTTP."""
     st, h, body = request(port, "GET", "/")
     assert st == 200 and b"<html" in body.lower()[:2000], f"GET / -> {st}"
-    for path in ("/wp-core.js", "/editor.css", "/font/NotoSansKR-Regular.otf"):
+    st, _, css = request(port, "GET", "/editor.css")
+    assert st == 200, f"GET /editor.css -> {st}"
+    fonts = sorted(set(FONT_URL.findall(css.decode("utf-8", "replace"))))   # every font the shipped CSS asks for
+    assert fonts, "editor.css references no font"
+    for path in ["/wp-core.js"] + ["/font/" + f for f in fonts]:
         st, _, body = request(port, "GET", path)
         assert st == 200 and len(body) > 100, f"GET {path} -> {st} ({len(body)} bytes)"
-    log("static files OK (/, wp-core.js, editor.css, font)")
+    log(f"static files OK (/, wp-core.js, editor.css, {len(fonts)} fonts)")
     st, _, _ = request(port, "GET", "/healthz", headers={"Host": "evil.example"})
     assert st == 421, f"foreign Host header not refused: {st}"
 
@@ -142,6 +150,14 @@ def check_http(port):
     assert st == 200 and docx[:2] == b"PK", f"/api/convert/docx -> {st}"
     log(f"convert OK (hwpx {len(hwpx)} bytes round trip, docx {len(docx)} bytes)")
     return name
+
+
+def check_imports(cmd):
+    """Every runtime module (packaging/manifest.py) imports inside the built pyz/binary."""
+    mods = manifest.modules(ROOT)
+    r = sh(cmd + ["selfcheck-imports"] + mods)
+    assert "imports OK %d" % len(mods) in r.stdout.splitlines(), "module missing from bundle"
+    log(f"imports OK ({len(mods)} modules)")
 
 
 def check_cli(cmd):
@@ -298,6 +314,7 @@ def run_local(cmd, label):
     log("$ " + " ".join(argv))
     proc = subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT, env=env)
     try:
+        check_imports([str(c) for c in cmd])
         info = wait_health(port, timeout=90, proc=proc)
         doc = check_http(port)
         assert (docs / (doc + ".html")).is_file(), "saved document not in --data folder"
@@ -343,6 +360,7 @@ def main():
     pkg.check_service()
     doc = check_http(pkg.port)
     pkg.check_saved(doc)
+    check_imports([str(c) for c in pkg.cli])
     check_cli(list(pkg.cli))
     pkg.uninstall()
     wait_down(pkg.port)

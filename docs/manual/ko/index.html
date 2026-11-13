@@ -3,7 +3,7 @@
 <title>한워드(hanword) 설명서</title><link rel="stylesheet" href="../manual.css"></head><body>
 <nav class="top"><div class="in"><a href="#top"><b>목차</b></a><a href="../index.html">언어 선택</a><span class="sp"></span><a href="../en/index.html">English</a></div></nav>
 <div class="wrap" id="top"><h1>한워드(hanword) 설명서</h1>
-<p>버전 0.1.5 · 한글(HWPX)·워드(DOCX)·HTML·텍스트를 열고 저장하는 웹 워드프로세서의 설치, 사용, 운영 안내입니다. 처음이라면 1→2→3→4장 순서로 읽으세요. 모든 장은 인쇄(PDF 저장)할 수 있습니다.</p>
+<p>버전 0.1.6 · 한글(HWPX)·워드(DOCX)·HTML·텍스트를 열고 저장하는 웹 워드프로세서의 설치, 사용, 운영 안내입니다. 처음이라면 1→2→3→4장 순서로 읽으세요. 모든 장은 인쇄(PDF 저장)할 수 있습니다.</p>
 <ol class="toc">
 <li><a href="#overview">소개</a></li><li><a href="#install">설치</a></li><li><a href="#firstrun">처음 실행</a></li><li><a href="#editor">편집기 사용법</a></li><li><a href="#formats">파일 형식과 한계</a></li><li><a href="#backup">문서 저장 위치와 백업</a></li><li><a href="#trouble">문제 해결</a></li><li><a href="#security">보안</a></li><li><a href="#cli">CLI 참고</a></li><li><a href="#config">설정 참고</a></li><li><a href="#licence">라이선스와 서드파티</a></li></ol>
 
@@ -30,10 +30,10 @@
 <pre><code># Linux (받은 파일과 SHA256SUMS를 같은 폴더에)
 sha256sum -c SHA256SUMS --ignore-missing
 # macOS
-shasum -a 256 hanword-0.1.5-macos-arm64.pkg
+shasum -a 256 hanword-0.1.6-macos-arm64.pkg
 # Windows (PowerShell 또는 명령 프롬프트)
-Get-FileHash .\hanword-0.1.5-windows-x64-setup.exe -Algorithm SHA256
-certutil -hashfile hanword-0.1.5-windows-x64-setup.exe SHA256</code></pre>
+Get-FileHash .\hanword-0.1.6-windows-x64-setup.exe -Algorithm SHA256
+certutil -hashfile hanword-0.1.6-windows-x64-setup.exe SHA256</code></pre>
 <p>출력된 값이 <code>SHA256SUMS</code>의 해당 줄과 같아야 합니다.</p>
 
 <h3>2.2 Windows</h3>
@@ -49,15 +49,15 @@ certutil -hashfile hanword-0.1.5-windows-x64-setup.exe SHA256</code></pre>
 <li>데이터: <code>/Library/Application Support/hanword</code> · 로그: <code>/Library/Logs/hanword</code>.</li>
 <li>삭제: <code>sudo /usr/local/hanword/uninstall.sh [--purge]</code> (<code>--purge</code>=데이터까지 삭제)</li></ol>
 <h3>2.4 Linux (systemd)</h3>
-<pre><code>tar xzf hanword-0.1.5-linux-x64.tar.gz
-cd hanword-0.1.5-linux-x64
+<pre><code>tar xzf hanword-0.1.6-linux-x64.tar.gz
+cd hanword-0.1.6-linux-x64
 sudo ./install.sh [--port N]</code></pre>
 <ul><li>설치 위치 <code>/opt/hanword</code>, 명령 <code>/usr/local/bin/hanword</code>, 데이터 <code>/var/lib/hanword</code>(사용자 <code>hanword</code>), 유닛 <code>hanword.service</code>.</li>
 <li>상태: <code>systemctl status hanword</code> · 로그: <code>journalctl -u hanword</code></li>
 <li>삭제: <code>sudo /opt/hanword/uninstall.sh [--purge]</code></li></ul>
 <h3>2.5 어느 OS에서나: .pyz 또는 소스</h3>
 <pre><code># 단일 파일(.pyz)
-python hanword-0.1.5.pyz serve
+python hanword-0.1.6.pyz serve
 
 # 소스 받아서 실행
 git clone https://github.com/gsungmoon-sketch/hanword
@@ -294,4 +294,4 @@ fonttools ttLib.woff2 compress 원본.ttf</code></pre>
 <li>번들 JavaScript: html2canvas, jsPDF(각 프로젝트의 라이선스는 저장소의 NOTICE 및 파일 머리말 참고).</li>
 <li>선택 구성요소는 번들되지 않으며 각자의 라이선스를 따릅니다. 특히 <b>pyhwp는 AGPL-3.0</b>이라 직접 설치하는 경우에만 사용됩니다.</li>
 <li>함초롬체(한컴), 은바탕(GPL)은 포함되지 않습니다.</li></ul>
-<footer>한워드(hanword) 0.1.5 설명서 · MIT 라이선스 · 화면 이름은 버전에 따라 조금 다를 수 있습니다.</footer></div></body></html>
+<footer>한워드(hanword) 0.1.6 설명서 · MIT 라이선스 · 화면 이름은 버전에 따라 조금 다를 수 있습니다.</footer></div></body></html>

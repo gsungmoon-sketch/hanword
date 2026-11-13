@@ -109,6 +109,19 @@ def run(argv=None) -> int:
         return 0
     if argv[0] == "serve":
         return _serve(argv[1:])
+    if argv[0] == "selfcheck-imports":   # smoke test: every runtime module is in the bundle
+        import importlib
+        _setup_path()
+        bad = []
+        for m in argv[1:]:
+            try:
+                importlib.import_module(m)
+            except Exception as e:
+                bad.append("%s: %s: %s" % (m, type(e).__name__, e))
+        print("imports OK %d" % (len(argv) - 1 - len(bad)))
+        for b in bad:
+            print("MISSING " + b)
+        return 1 if bad else 0
     if argv[0] in ("-h", "--help", "help"):
         print(HINT)
         return _cli(["--help"])

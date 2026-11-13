@@ -2,7 +2,8 @@
 """원본 XML 되씀(K2 덩이·허용 파트) 시험(stdlib unittest). 실행: python3 tests/test_keep.py  (python3 -s -I 도 통과해야 함)"""
 import os, sys, io, re, glob, json, copy, time, zipfile, unittest, subprocess, base64
 HERE = os.path.dirname(os.path.abspath(__file__)); APP = os.path.dirname(HERE)
-sys.path.insert(0, APP)
+sys.path.insert(0, APP); sys.path.insert(0, HERE)
+import timing as tm
 import hanword_core as core
 import hanword_keep as hk
 
@@ -455,7 +456,7 @@ class FieldAllowlist(unittest.TestCase):   # 감사(2026-11-14): 필드 허용 �
     def test_hwpx_foreign_ns_and_long_param(self):   # 감사 MED: 이름공간 무관 fieldBegin, 매개변수 이차 시간
         self.assertTrue(hk.fields_bad(b'<x:p xmlns:x="urn:x"><x:fieldBegin type="MAILMERGE"/></x:p>', "hwpx"))
         big = b'<hp:fieldBegin xmlns:hp="urn:x" type="HYPERLINK" name=""><hp:parameters><hp:stringParam name="Path">' + b"&#65;" * 100000 + b'</hp:stringParam></hp:parameters></hp:fieldBegin>'
-        t = time.time(); self.assertTrue(hk.fields_bad(b"<r>" + big + b"</r>", "hwpx")); self.assertLess(time.time() - t, 2.0)
+        t = time.time(); self.assertTrue(hk.fields_bad(b"<r>" + big + b"</r>", "hwpx")); self.assertLess(time.time() - t, tm.limit(2.0))
     def test_fields_in_comments_header_part(self):   # 메모·머리말 파트의 필드
         p = self.p; s = self.s
         COM = (b'<w:comments xmlns:w="%s"><w:comment w:id="0" w:author="a"><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
@@ -505,7 +506,7 @@ class Mechanics(unittest.TestCase):
     def test_align_linear(self):
         n = 100000; a = ["h%d" % (i % 997) for i in range(n)]; b = list(a); del b[500]; b.insert(70000, "new"); b[99000] = "chg"
         t = time.time(); ma = hk.align(a, b); dt = time.time() - t
-        self.assertLess(dt, 5.0); self.assertGreater(sum(1 for x in ma if x >= 0), n - 10)
+        self.assertLess(dt, tm.limit(5.0)); self.assertGreater(sum(1 for x in ma if x >= 0), n - 10)
         js = [j for j in ma if j >= 0]; self.assertEqual(js, sorted(js))
     def test_hash_note_by_text(self):
         m1 = {"notes": {"1": "가"}, "blocks": [{"type": "p", "runs": [{"text": "a"}, {"endnote": "1"}]}]}

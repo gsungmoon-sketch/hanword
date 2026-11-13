@@ -24,8 +24,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "hanword"
-MODULES = ["server.py", "hanword_core.py", "hanword_model.py", "hwpxconv.py", "hwpx_std.py", "docxconv.py",
-           "docconv.py", "hanword_version.py", "hanword"]
+sys.path.insert(0, str(ROOT / "packaging"))
+import manifest  # noqa: E402  single source of the runtime modules (also packaging/build.py)
+MODULES = [m + ".py" for m in manifest.modules(ROOT)] + [manifest.CLI_SCRIPT]
 STATIC_GLOBS = ["*.html", "*.css", "*.js", "hwpx_skeleton.hwpx", "NOTICE-*.txt", "LICENSE"]
 DIRS = ["font", "licenses"]
 

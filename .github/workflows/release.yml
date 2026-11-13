@@ -54,7 +54,7 @@ jobs:
       matrix:
         include:
           - { name: windows-x64, os: windows-latest, kind: windows }
-          - { name: macos-arm64, os: macos-14, kind: macos }
+          - { name: macos-arm64, os: macos-15, kind: macos }        # macos-14 image retired
           - { name: macos-x64, os: macos-15-intel, kind: macos }
           - { name: linux-x64, os: ubuntu-22.04, kind: linux }   # oldest supported glibc (2.35)
     runs-on: ${{ matrix.os }}
@@ -68,6 +68,8 @@ jobs:
 
       - name: tests
         working-directory: tests
+        env:
+          HANWORD_TIME_SCALE: "3"   # absolute time limits x3 on shared runners (quadratic checks use n->4n ratio)
         run: python -m unittest discover -v -p "test_*.py"
 
       - name: install PyInstaller (build time only)
@@ -160,7 +162,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-14]
+        os: [ubuntu-22.04, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

@@ -22,6 +22,8 @@ jobs:
         run: python hanword --json formats
       - name: unit + server + corpus tests
         working-directory: tests
+        env:
+          HANWORD_TIME_SCALE: "3"   # absolute time limits x3 on shared runners (quadratic checks use n->4n ratio)
         run: python -m unittest discover -v -p "test_*.py"
       - name: packaging entry point (no build)
         run: |
