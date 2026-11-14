@@ -39,8 +39,11 @@ def start(extra_env=None, args=()):
     env = {k: v for k, v in os.environ.items() if not k.startswith("WP_")}
     env.update({"WP_DOCS": docs, "WP_PORT": str(port), "PYTHONIOENCODING": "utf-8"})
     env.update(extra_env or {})
-    p = subprocess.Popen([sys.executable, os.path.join(APP, "server.py"), *args], env=env,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # 서버 출력 = 파일(파이프 아님): 아무도 안 읽는 파이프가 차면(macOS 16KB) 서버가 멈추고, 닫지 않은 파이프는 ResourceWarning
+    fd, logp = tempfile.mkstemp(prefix="hw-test-server-", suffix=".log")
+    with os.fdopen(fd, "wb") as log:
+        p = subprocess.Popen([sys.executable, os.path.join(APP, "server.py"), *args], env=env,
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
     for _ in range(100):
         if p.poll() is not None:
             break

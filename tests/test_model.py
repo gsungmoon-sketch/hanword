@@ -157,32 +157,56 @@ class Stdlib(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-500:]); self.assertEqual(r.stdout.split(), ["docx", "hwpx", "a", "b"])
 
 class ServeStop(unittest.TestCase):   # v0.1.7 Windows 스모크: 부모(부트로더)만 죽고 자식이 포트를 계속 잡음
+    START = 90   # 첫 import 가 느린 러너(macOS) 여유 — 준비는 서버 로그·포트로 결정적으로 판정
     def test_server_exits_with_launcher(self):
-        import subprocess, socket, signal, tempfile, shutil, urllib.request
+        import subprocess, signal, tempfile, shutil, http.client
         if os.name == "nt": self.skipTest("POSIX 경로 시험(Windows 는 릴리스 스모크가 같은 단언)")
-        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        import socket
+        with socket.socket() as so: so.bind(("127.0.0.1", 0)); port = so.getsockname()[1]
         tmp = tempfile.mkdtemp(prefix="hw-stop-")
+        pidf, logf = os.path.join(tmp, "child.pid"), os.path.join(tmp, "child.log")
         env = dict(os.environ, HANWORD_EXIT_WITH_PARENT="1")
-        launcher = ("import subprocess, sys; p = subprocess.Popen([sys.executable, %r, 'serve', '--port', '%d', '--data', %r]); print(p.pid, flush=True); p.wait()"
-                    % (os.path.join(APP, "packaging", "entry.py"), port, os.path.join(tmp, "docs")))
-        par = subprocess.Popen([sys.executable, "-c", launcher], env=env, stdout=subprocess.PIPE, text=True)
-        child = int(par.stdout.readline())
+        # 실행기: 서버 자식을 띄우고(출력=파일, 파이프 없음) pid 를 파일로 — 파이프 버퍼·플러시에 기대지 않음
+        launcher = ("import subprocess, sys, os\n"
+                    "log = open(%r, 'wb')\n"
+                    "p = subprocess.Popen([sys.executable, %r, 'serve', '--port', '%d', '--data', %r], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)\n"
+                    "open(%r + '.tmp', 'w').write(str(p.pid)); os.replace(%r + '.tmp', %r)\n"
+                    "p.wait()\n") % (logf, os.path.join(APP, "packaging", "entry.py"), port, os.path.join(tmp, "docs"), pidf, pidf, pidf)
+        par = subprocess.Popen([sys.executable, "-c", launcher], env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        child = None
         def up():
-            try: return urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=2).status == 200
-            except Exception: return False
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            try: c.request("GET", "/healthz", headers={"Host": "127.0.0.1:%d" % port}); return c.getresponse().status == 200
+            except OSError: return False
+            finally: c.close()
+        def alive(pid):
+            try: os.kill(pid, 0); return True
+            except OSError: return False
+        def tail():
+            try:
+                with open(logf, "rb") as f: return f.read()[-1500:].decode("utf-8", "replace")
+            except OSError: return ""
         try:
             t0 = time.time()
             while not up():
-                self.assertLess(time.time() - t0, 30, "server did not start"); time.sleep(0.2)
+                if child is None and os.path.exists(pidf):
+                    with open(pidf) as f: child = int(f.read())
+                self.assertIsNone(par.poll(), "launcher exited: " + tail())
+                if child is not None: self.assertTrue(alive(child), "server exited early: " + tail())
+                self.assertLess(time.time() - t0, self.START, "server did not start: " + tail()); time.sleep(0.25)
+            if child is None:
+                with open(pidf) as f: child = int(f.read())
             par.send_signal(signal.SIGKILL); par.wait()          # 부모만 강제 종료(TerminateProcess 와 같은 꼴)
             t0 = time.time()
             while up():
                 self.assertLess(time.time() - t0, 10, "server still answers after its launcher died"); time.sleep(0.2)
         finally:
-            if par.poll() is None: par.kill()
-            try: os.kill(child, signal.SIGKILL)   # 실패 시 고아 서버 정리
-            except OSError: pass
-            par.stdout.close(); shutil.rmtree(tmp, ignore_errors=True)
+            if par.poll() is None: par.kill(); par.wait()
+            if child is not None and alive(child):
+                try: os.kill(child, signal.SIGKILL)   # 실패 시 고아 서버 정리
+                except OSError: pass
+            shutil.rmtree(tmp, ignore_errors=True)
 
 class ConsoleEncoding(unittest.TestCase):   # v0.1.6 Windows 스모크: cp1252 콘솔에서 '→' 출력 UnicodeEncodeError
     def run_cli(self, *args, entry=False):

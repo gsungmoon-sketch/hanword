@@ -529,7 +529,7 @@ class CLI(unittest.TestCase):
         f = os.path.join(HERE, "corpus", "rich.hwpx"); hw = os.path.join(APP, "hanword")
         with tempfile.TemporaryDirectory() as td:
             mj = os.path.join(td, "m.json"); o = os.path.join(td, "o.hwpx")
-            subprocess.run([sys.executable, hw, "model", f], stdout=open(mj, "wb"), check=True)
+            with open(mj, "wb") as fo: subprocess.run([sys.executable, hw, "model", f], stdout=fo, check=True)
             r = subprocess.run([sys.executable, hw, "--json", "render", mj, o, "--keep", f], capture_output=True, check=True)
             j = json.loads(r.stdout); self.assertEqual(j["kept"]["level"], "blocks")
             r = subprocess.run([sys.executable, hw, "--json", "convert", f, o, "--keep", f, "--no-keep"], capture_output=True, check=True)
