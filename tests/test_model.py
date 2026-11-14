@@ -156,6 +156,34 @@ class Stdlib(unittest.TestCase):
         r = subprocess.run([sys.executable, "-s", "-I", "-c", code], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[-500:]); self.assertEqual(r.stdout.split(), ["docx", "hwpx", "a", "b"])
 
+class ServeStop(unittest.TestCase):   # v0.1.7 Windows 스모크: 부모(부트로더)만 죽고 자식이 포트를 계속 잡음
+    def test_server_exits_with_launcher(self):
+        import subprocess, socket, signal, tempfile, shutil, urllib.request
+        if os.name == "nt": self.skipTest("POSIX 경로 시험(Windows 는 릴리스 스모크가 같은 단언)")
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        tmp = tempfile.mkdtemp(prefix="hw-stop-")
+        env = dict(os.environ, HANWORD_EXIT_WITH_PARENT="1")
+        launcher = ("import subprocess, sys; p = subprocess.Popen([sys.executable, %r, 'serve', '--port', '%d', '--data', %r]); print(p.pid, flush=True); p.wait()"
+                    % (os.path.join(APP, "packaging", "entry.py"), port, os.path.join(tmp, "docs")))
+        par = subprocess.Popen([sys.executable, "-c", launcher], env=env, stdout=subprocess.PIPE, text=True)
+        child = int(par.stdout.readline())
+        def up():
+            try: return urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=2).status == 200
+            except Exception: return False
+        try:
+            t0 = time.time()
+            while not up():
+                self.assertLess(time.time() - t0, 30, "server did not start"); time.sleep(0.2)
+            par.send_signal(signal.SIGKILL); par.wait()          # 부모만 강제 종료(TerminateProcess 와 같은 꼴)
+            t0 = time.time()
+            while up():
+                self.assertLess(time.time() - t0, 10, "server still answers after its launcher died"); time.sleep(0.2)
+        finally:
+            if par.poll() is None: par.kill()
+            try: os.kill(child, signal.SIGKILL)   # 실패 시 고아 서버 정리
+            except OSError: pass
+            par.stdout.close(); shutil.rmtree(tmp, ignore_errors=True)
+
 class ConsoleEncoding(unittest.TestCase):   # v0.1.6 Windows 스모크: cp1252 콘솔에서 '→' 출력 UnicodeEncodeError
     def run_cli(self, *args, entry=False):
         import subprocess

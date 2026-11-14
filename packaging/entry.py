@@ -66,9 +66,49 @@ def _serve(argv) -> int:
         if v is not None:
             os.environ[k] = str(v)
     _setup_path()
+    _exit_with_parent()
     import server
     server.serve()
     return 0
+
+
+def _exit_with_parent() -> None:
+    """End the server when its launcher process ends.
+
+    The Windows PyInstaller one-file build is two processes: the bootloader (the PID that a
+    service manager, a shell or subprocess.Popen sees) and the Python child that serves the
+    port. TerminateProcess/kill on that PID ends only the bootloader and left the child
+    serving (v0.1.7 release smoke: "server still answers after uninstall/stop"). POSIX
+    bootloaders forward signals but not SIGKILL, Windows ones cannot forward anything. So in
+    every frozen build (or when HANWORD_EXIT_WITH_PARENT=1, used by the tests) the child waits
+    on its parent and exits with it."""
+    if not (os.environ.get("HANWORD_EXIT_WITH_PARENT") == "1" or getattr(sys, "frozen", False)):
+        return
+    import threading
+    ppid = os.getppid()
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k32.WaitForSingleObject.restype = wintypes.DWORD
+        k32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        h = k32.OpenProcess(0x00100000, False, ppid)   # SYNCHRONIZE
+        if not h:
+            return   # parent unknown/inaccessible: keep serving rather than exit at once
+
+        def watch():
+            k32.WaitForSingleObject(h, 0xFFFFFFFF)   # INFINITE
+            os._exit(0)
+    else:
+        import time
+
+        def watch():
+            while os.getppid() == ppid:   # POSIX: re-parented when the parent dies
+                time.sleep(0.5)
+            os._exit(0)
+    threading.Thread(target=watch, name="exit-with-parent", daemon=True).start()
 
 
 def _cli(argv) -> int:
